@@ -1,0 +1,24 @@
+# Dependencies
+backend/node_modules/
+
+# Runtime uploads and generated files
+backend/uploads/
+backend/guide_processor/__pycache__/
+backend/test_*.png
+build/
+
+# Local Python environments
+backend/.venv/
+.venv/
+
+# Model weights
+backend/*.pt
+
+# macOS
+.DS_Store
+
+# Xcode user/build files
+photo2026/photo2026.xcodeproj/xcuserdata/
+photo2026/DerivedData/
+DerivedData/
+
