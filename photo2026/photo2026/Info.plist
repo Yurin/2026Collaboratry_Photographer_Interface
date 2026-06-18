@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ServerBaseURL</key>
+	<string>http://localhost:3000</string>
+	<key>WebSocketBaseURL</key>
+	<string></string>
+	<key>ExperimenterPIN</key>
+	<string>2026</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>撮影者端末と写真・ガイドを共有するため、ローカルネットワーク上の撮影サーバーへ接続します。</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>
