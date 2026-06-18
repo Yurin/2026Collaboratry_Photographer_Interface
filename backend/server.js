@@ -185,13 +185,44 @@ function cleanupExpiredSessions() {
 
 // WebSocket: 撮影者Web → 被写体iOS に映像フレームを送る
 const wss = new WebSocketServer({
-  server,
-  path: "/ws/video",
+  noServer: true,
+  perMessageDeflate: false,
 });
 
 const sessionWss = new WebSocketServer({
-  server,
-  path: "/ws/session",
+  noServer: true,
+  perMessageDeflate: false,
+});
+
+// A single HTTP server must route each upgrade request to exactly one
+// WebSocketServer. Attaching multiple WebSocketServer instances directly to
+// the same server makes the non-matching instance reject an already accepted
+// connection.
+server.on("upgrade", (req, socket, head) => {
+  let pathname;
+
+  try {
+    pathname = new URL(req.url, `http://${req.headers.host || "localhost"}`).pathname;
+  } catch {
+    socket.destroy();
+    return;
+  }
+
+  const targetServer =
+    pathname === "/ws/video"
+      ? wss
+      : pathname === "/ws/session"
+        ? sessionWss
+        : null;
+
+  if (!targetServer) {
+    socket.destroy();
+    return;
+  }
+
+  targetServer.handleUpgrade(req, socket, head, (ws) => {
+    targetServer.emit("connection", ws, req);
+  });
 });
 
 wss.on("connection", (ws, req) => {
