@@ -17,8 +17,10 @@ body {
 .app {
   width: 100%;
   height: 100dvh;
-  display: grid;
-  grid-template-rows: 1fr auto;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: #000;
 }
 
@@ -26,7 +28,8 @@ body {
 .camera-container {
   position: relative;
   width: 100%;
-  min-height: 0;
+  min-height: min(58dvh, 620px);
+  flex: 1 0 min(58dvh, 620px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -36,8 +39,8 @@ body {
 /* 3:4固定のカメラ表示領域 */
 .camera-stage {
   position: relative;
-  width: min(100%, calc((100dvh - 210px) * 3 / 4));
-  max-height: calc(100dvh - 210px);
+  width: min(100%, calc(56dvh * 3 / 4));
+  max-height: 56dvh;
   aspect-ratio: 3 / 4;
   background: #111;
   overflow: hidden;
@@ -64,6 +67,10 @@ body {
   opacity: 0.5;
   transform-origin: center center;
   transition: transform 120ms linear, opacity 120ms linear;
+}
+
+#guide[hidden] {
+  display: none;
 }
 
 /* 上のステータス */
@@ -118,6 +125,19 @@ body {
   line-height: 1.35;
 }
 
+.experiment-status {
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto 10px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  text-align: center;
+}
+
+.guide-control[hidden] {
+  display: none;
+}
+
 .slider-area {
   display: block;
   width: 100%;
@@ -168,6 +188,11 @@ body {
   font-weight: 600;
 }
 
+.action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .send-btn {
   background: #2563eb;
 }
@@ -194,7 +219,52 @@ body {
 }
 
 .thumbnail-container {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 104px;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px calc(env(safe-area-inset-bottom) + 12px);
+  overflow-x: auto;
+  background: rgba(12, 12, 12, 0.98);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  scrollbar-width: thin;
+}
+
+.thumbnail-container[hidden] {
   display: none;
+}
+
+.thumbnail {
+  position: relative;
+  width: 104px;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  background: #222;
+}
+
+.thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumbnail-delete {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 21px;
+  line-height: 27px;
 }
 
 #canvas {

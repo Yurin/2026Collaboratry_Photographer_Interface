@@ -67,7 +67,12 @@ Xcode 上で `photo2026` scheme を選び、シミュレータまたは実機で
 - `ServerBaseURL`
 - `WebSocketBaseURL`
 
-この URL が backend サーバーへ到達できる必要があります。未設定の場合、Swift 側のコードは `http://localhost:3000` とそこから導出した WebSocket URL を使います。
+接続先は iPhone / iPad の「設定」アプリから `photo2026` を開いて変更できます。
+
+- サーバーURL: `http://MacのローカルIP:3000`
+- WebSocket URL: 通常は空欄でよい。サーバーURLから自動生成される
+
+設定変更後は `photo2026` アプリを終了して再起動してください。未設定の場合は `Info.plist` の値、さらに未設定なら `http://localhost:3000` を使います。シミュレータでは localhost を利用できますが、実機ではMacのローカルIPを指定する必要があります。
 
 ## 5. 撮影者 Web を開く
 
@@ -94,13 +99,50 @@ http://localhost:3000/?sessionId=任意のセッションID
 9. 撮影者 Web で写真を撮り、「送信」を押す。
 10. iOS アプリの「受信写真」で送信された写真を確認・保存する。
 
-## 7. 保存データ
+## 7. 実験モードの利用手順
+
+Phase 1 の実験モードでは、条件A/B/Cの切り替えと試行単位の操作ログ保存ができます。
+
+1. iOS アプリの「実験」タブを開く。
+2. 実験者PINを入力する。開発時の既定値は `2026`。
+3. `participantId`、`pairId`、`referenceImageId`、条件を入力する。
+4. 「実験セッションを作成」を押す。
+5. 「試行を作成」を押す。
+6. 「試行を開始して撮影画面へ」を押す。
+7. 表示されたQRコードを撮影者側で開く。
+8. 撮影・送信を行う。
+9. 実験タブへ戻り、「試行を完了」または理由を入力して「試行を中断」を押す。
+
+条件によるWeb表示は以下です。
+
+- 条件A: 撮影者向けガイド操作を非表示
+- 条件B: 撮影者向けガイド操作を表示
+- 条件C: 撮影者向けガイド操作を表示し、iOS側のライブ・被写体支援領域も有効化
+
+現段階では条件切り替えとログ基盤が対象であり、自動的な構図・ポーズ差分指示は今後のPhase 3・4で追加します。
+
+実験データは以下へ保存されます。
+
+```text
+backend/uploads/<sessionId>/experiment/
+├── session.json
+└── trials/<trialId>/
+    ├── trial.json
+    └── events.jsonl
+```
+
+## 8. 保存データ
 
 backend に送られたファイルは以下に保存されます。
 
 ```text
-2026Collaboratry_Photographer_Interface/backend/uploads/
+2026Collaboratry_Photographer_Interface/backend/uploads/<sessionId>/
+├── photos/
+├── references/
+└── guides/
 ```
+
+過去バージョンでセッション直下へ保存されたファイルも引き続き読み込めます。受信写真APIは `photos/` と旧形式の撮影写真だけを返し、参照画像・ガイド画像を除外します。
 
 サーバーは以下の削除機能を持ちます。
 

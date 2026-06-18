@@ -11,12 +11,12 @@
     <section class="camera-container">
         <div class="camera-stage">
           <video id="video" autoplay playsinline muted></video>
-          <img id="guide" src="guide.png" alt="guide overlay" />
+          <img id="guide" alt="撮影ガイド" hidden />
         </div>
 
       <div class="top-bar">
         <div class="status">接続準備中</div>
-        <button id="toggleGuideBtn" class="action-btn">ガイドON/OFF</button>
+        <button id="toggleGuideBtn" class="action-btn guide-control" hidden>ガイドON/OFF</button>
       </div>
     </section>
 
@@ -26,7 +26,9 @@
         <div id="supportMessage" class="support-message"></div>
       </div>
 
-      <label class="slider-area">
+      <div id="experimentStatus" class="experiment-status" hidden></div>
+
+      <label class="slider-area guide-control" hidden>
         ガイド透過度
         <input
           id="opacitySlider"
@@ -57,6 +59,7 @@
       id="thumbnailContainer"
       class="thumbnail-container"
       aria-label="撮影した写真一覧"
+      hidden
     ></section>
 
     <canvas id="canvas"></canvas>

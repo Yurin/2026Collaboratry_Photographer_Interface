@@ -5,15 +5,31 @@ const fs = require("fs");
 const cors = require("cors");
 const { createServer } = require("http");
 const { execFileSync } = require("child_process");
+const { randomUUID } = require("crypto");
 const { WebSocket, WebSocketServer } = require("ws");
 
 const app = express();
 const port = process.env.PORT || 3000;
 const sessionTtlMs = Number(process.env.SESSION_TTL_MS || 1000 * 60 * 60 * 6);
 const cleanupIntervalMs = Number(process.env.CLEANUP_INTERVAL_MS || 1000 * 60 * 10);
+const uploadFileSizeLimit = Number(process.env.UPLOAD_FILE_SIZE_LIMIT || 20 * 1024 * 1024);
 
 // backend/uploads に保存する
 const uploadRoot = path.join(__dirname, "uploads");
+const dataDirectories = {
+  photos: "photos",
+  references: "references",
+  guides: "guides",
+};
+const experimentConditions = new Set(["A", "B", "C"]);
+const trialStates = new Set([
+  "configured",
+  "ready",
+  "running",
+  "captured",
+  "completed",
+  "aborted",
+]);
 
 // ../photographer の index.html / script.js / style.css / guide.png を配信する
 const photographerDir = path.join(__dirname, "..", "photographer");
@@ -27,11 +43,15 @@ function safeSessionId(value, fallback = "default") {
 const storage = multer.diskStorage({
   destination(req, file, cb) {
     const sessionId = safeSessionId(req.body.sessionId || req.params?.sessionId);
-
-    const sessionDir = path.join(uploadRoot, sessionId);
-    fs.mkdirSync(sessionDir, { recursive: true });
-
-    cb(null, sessionDir);
+    const dataType =
+      file.fieldname === "guide"
+        ? "guides"
+        : file.fieldname === "reference"
+          ? "references"
+          : "photos";
+    const destinationDir = getDataDir(sessionId, dataType);
+    fs.mkdirSync(destinationDir, { recursive: true });
+    cb(null, destinationDir);
   },
 
   filename(req, file, cb) {
@@ -42,20 +62,214 @@ const storage = multer.diskStorage({
     const isReference = file.fieldname === "reference";
     const namePrefix = isGuide ? "guide_" : isReference ? "reference_" : "";
 
-    cb(null, `${namePrefix}${timestamp}_${safeName}`);
+    const uniqueSuffix = Math.random().toString(36).slice(2, 8);
+    cb(null, `${namePrefix}${timestamp}_${uniqueSuffix}_${safeName}`);
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: uploadFileSizeLimit,
+    files: 50,
+  },
+  fileFilter(req, file, cb) {
+    if (!file.mimetype.startsWith("image/")) {
+      cb(new Error("Only image uploads are allowed"));
+      return;
+    }
+    cb(null, true);
+  },
+});
 
 // 画像URLは絶対URLではなく相対URLで返す
 // Cloudflare Tunnel / HTTPS 経由でも mixed content を避けやすくするため
-function makeFileUrl(sessionId, filename) {
-  return `/uploads/${encodeURIComponent(sessionId)}/${encodeURIComponent(filename)}`;
+function makeFileUrl(sessionId, filename, dataType = null) {
+  const encodedParts = [
+    encodeURIComponent(sessionId),
+    dataType ? encodeURIComponent(dataDirectories[dataType]) : null,
+    encodeURIComponent(filename),
+  ].filter(Boolean);
+  return `/uploads/${encodedParts.join("/")}`;
 }
 
 function getSessionDir(sessionId) {
   return path.join(uploadRoot, safeSessionId(sessionId));
+}
+
+function getDataDir(sessionId, dataType) {
+  const directoryName = dataDirectories[dataType];
+  if (!directoryName) {
+    throw new Error(`Unknown data type: ${dataType}`);
+  }
+  return path.join(getSessionDir(sessionId), directoryName);
+}
+
+function getExperimentDir(sessionId) {
+  return path.join(getSessionDir(sessionId), "experiment");
+}
+
+function getExperimentSessionPath(sessionId) {
+  return path.join(getExperimentDir(sessionId), "session.json");
+}
+
+function getTrialDir(sessionId, trialId) {
+  return path.join(getExperimentDir(sessionId), "trials", safeIdentifier(trialId));
+}
+
+function getTrialPath(sessionId, trialId) {
+  return path.join(getTrialDir(sessionId, trialId), "trial.json");
+}
+
+function getTrialEventsPath(sessionId, trialId) {
+  return path.join(getTrialDir(sessionId, trialId), "events.jsonl");
+}
+
+function safeIdentifier(value, fallback = "") {
+  return String(value || fallback)
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function requiredString(value, fieldName) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    const error = new Error(`${fieldName} is required`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return normalized;
+}
+
+function normalizeCondition(value) {
+  const conditionId = String(value || "").trim().toUpperCase();
+  if (!experimentConditions.has(conditionId)) {
+    const error = new Error("conditionId must be A, B, or C");
+    error.statusCode = 400;
+    throw error;
+  }
+  return conditionId;
+}
+
+function readJsonFile(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function writeJsonFile(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.renameSync(temporaryPath, filePath);
+}
+
+function appendJsonLines(filePath, values) {
+  if (values.length === 0) return;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const lines = values.map((value) => JSON.stringify(value)).join("\n");
+  fs.appendFileSync(filePath, `${lines}\n`, "utf8");
+}
+
+function readJsonLines(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  return fs
+    .readFileSync(filePath, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+function loadExperimentSession(sessionId) {
+  return readJsonFile(getExperimentSessionPath(sessionId));
+}
+
+function loadTrial(sessionId, trialId) {
+  return readJsonFile(getTrialPath(sessionId, trialId));
+}
+
+function saveExperimentSession(session) {
+  writeJsonFile(getExperimentSessionPath(session.sessionId), session);
+}
+
+function saveTrial(sessionId, trial) {
+  writeJsonFile(getTrialPath(sessionId, trial.trialId), trial);
+}
+
+function publicExperimentState(sessionId) {
+  const experiment = loadExperimentSession(sessionId);
+  if (!experiment) return null;
+  const currentTrial = experiment.currentTrialId
+    ? loadTrial(sessionId, experiment.currentTrialId)
+    : null;
+  return {
+    ...experiment,
+    currentTrial,
+  };
+}
+
+function appendTrialEvents(sessionId, trialId, events, defaults = {}) {
+  const trial = loadTrial(sessionId, trialId);
+  if (!trial) {
+    const error = new Error("trial not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const serverTimestamp = new Date().toISOString();
+  const eventsPath = getTrialEventsPath(sessionId, trialId);
+  const existingEventIds = new Set(
+    readJsonLines(eventsPath).map((event) => event.eventId)
+  );
+  const normalizedEvents = events.map((event, index) => ({
+    schemaVersion: "1.0",
+    eventId: safeIdentifier(event.eventId) || randomUUID(),
+    participantId: trial.participantId,
+    pairId: trial.pairId,
+    sessionId,
+    conditionId: trial.conditionId,
+    trialId,
+    role: event.role || defaults.role || "system",
+    eventType: requiredString(event.eventType, "eventType"),
+    clientTimestamp: event.clientTimestamp || null,
+    serverTimestamp,
+    sequenceNumber: Number.isFinite(Number(event.sequenceNumber))
+      ? Number(event.sequenceNumber)
+      : null,
+    payload: event.payload && typeof event.payload === "object" ? event.payload : {},
+    batchIndex: index,
+  })).filter((event) => !existingEventIds.has(event.eventId));
+  appendJsonLines(eventsPath, normalizedEvents);
+  return normalizedEvents;
+}
+
+function listFiles(directory) {
+  if (!fs.existsSync(directory)) return [];
+  return fs
+    .readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
+    .map((entry) => {
+      const filePath = path.join(directory, entry.name);
+      return {
+        filename: entry.name,
+        mtimeMs: fs.statSync(filePath).mtimeMs,
+      };
+    });
+}
+
+function listLegacyFiles(sessionId, predicate) {
+  const sessionDir = getSessionDir(sessionId);
+  if (!fs.existsSync(sessionDir)) return [];
+  return fs
+    .readdirSync(sessionDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && !entry.name.startsWith(".") && predicate(entry.name))
+    .map((entry) => {
+      const filePath = path.join(sessionDir, entry.name);
+      return {
+        filename: entry.name,
+        mtimeMs: fs.statSync(filePath).mtimeMs,
+        legacy: true,
+      };
+    });
 }
 
 function runPythonGuideGenerator(inputPath, outputPath, guideType, cropParams = null) {
@@ -308,6 +522,14 @@ sessionWss.on("connection", (ws, req) => {
     type: "connected",
     sessionId,
   });
+  const experiment = publicExperimentState(sessionId);
+  if (experiment) {
+    sendJson(ws, {
+      type: "experiment-configured",
+      sessionId,
+      experiment,
+    });
+  }
 
   ws.on("close", () => {
     session.watchers.delete(ws);
@@ -319,8 +541,322 @@ sessionWss.on("connection", (ws, req) => {
   });
 });
 
+// MARK: - Experiment session API
+
+app.post("/api/experiments/sessions", (req, res, next) => {
+  try {
+    const participantId = requiredString(req.body.participantId, "participantId");
+    const pairId = requiredString(req.body.pairId, "pairId");
+    const conditionId = normalizeCondition(req.body.conditionId);
+    const sessionId = safeSessionId(req.body.sessionId || randomUUID(), "");
+    const now = new Date().toISOString();
+
+    if (loadExperimentSession(sessionId)) {
+      return res.status(409).json({
+        success: false,
+        error: "experiment session already exists",
+      });
+    }
+
+    const experiment = {
+      schemaVersion: "1.0",
+      sessionId,
+      participantId,
+      pairId,
+      conditionId,
+      referenceImageId: String(req.body.referenceImageId || "").trim() || null,
+      supportLevel: Number(req.body.supportLevel || 1),
+      status: "configured",
+      currentTrialId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    saveExperimentSession(experiment);
+    res.status(201).json({
+      success: true,
+      experiment,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/experiments/sessions/:sessionId", (req, res, next) => {
+  try {
+    const sessionId = safeSessionId(req.params.sessionId, "");
+    const experiment = publicExperimentState(sessionId);
+    if (!experiment) {
+      return res.status(404).json({
+        success: false,
+        error: "experiment session not found",
+      });
+    }
+    res.json({
+      success: true,
+      experiment,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/experiments/sessions/:sessionId/condition", (req, res, next) => {
+  try {
+    const sessionId = safeSessionId(req.params.sessionId, "");
+    const experiment = loadExperimentSession(sessionId);
+    if (!experiment) {
+      return res.status(404).json({
+        success: false,
+        error: "experiment session not found",
+      });
+    }
+
+    const currentTrial = experiment.currentTrialId
+      ? loadTrial(sessionId, experiment.currentTrialId)
+      : null;
+    if (currentTrial && ["running", "captured"].includes(currentTrial.state)) {
+      return res.status(409).json({
+        success: false,
+        error: "condition cannot be changed during a trial",
+      });
+    }
+
+    experiment.conditionId = normalizeCondition(req.body.conditionId);
+    experiment.updatedAt = new Date().toISOString();
+    saveExperimentSession(experiment);
+    notifySession(sessionId, {
+      type: "experiment-configured",
+      sessionId,
+      experiment: publicExperimentState(sessionId),
+    });
+    res.json({
+      success: true,
+      experiment: publicExperimentState(sessionId),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/experiments/sessions/:sessionId/trials", (req, res, next) => {
+  try {
+    const sessionId = safeSessionId(req.params.sessionId, "");
+    const experiment = loadExperimentSession(sessionId);
+    if (!experiment) {
+      return res.status(404).json({
+        success: false,
+        error: "experiment session not found",
+      });
+    }
+
+    const activeTrial = experiment.currentTrialId
+      ? loadTrial(sessionId, experiment.currentTrialId)
+      : null;
+    if (activeTrial && !["completed", "aborted"].includes(activeTrial.state)) {
+      return res.status(409).json({
+        success: false,
+        error: "active trial already exists",
+      });
+    }
+
+    const now = new Date().toISOString();
+    const trialId = safeIdentifier(req.body.trialId) || randomUUID();
+    const trial = {
+      schemaVersion: "1.0",
+      trialId,
+      sessionId,
+      participantId: experiment.participantId,
+      pairId: experiment.pairId,
+      conditionId: experiment.conditionId,
+      referenceImageId:
+        String(req.body.referenceImageId || experiment.referenceImageId || "").trim() || null,
+      selectedGuideType: String(req.body.selectedGuideType || "").trim() || null,
+      supportLevel: Number(req.body.supportLevel || experiment.supportLevel || 1),
+      isPractice: Boolean(req.body.isPractice),
+      state: "configured",
+      startTime: null,
+      endTime: null,
+      finalPhotoId: null,
+      abortReason: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    saveTrial(sessionId, trial);
+    experiment.currentTrialId = trialId;
+    experiment.status = "configured";
+    experiment.referenceImageId = trial.referenceImageId;
+    experiment.updatedAt = now;
+    saveExperimentSession(experiment);
+    notifySession(sessionId, {
+      type: "experiment-configured",
+      sessionId,
+      experiment: publicExperimentState(sessionId),
+    });
+    res.status(201).json({
+      success: true,
+      trial,
+      experiment: publicExperimentState(sessionId),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/experiments/trials/:trialId/start", (req, res, next) => {
+  try {
+    const sessionId = safeSessionId(req.body.sessionId, "");
+    const trialId = safeIdentifier(req.params.trialId);
+    const experiment = loadExperimentSession(sessionId);
+    const trial = loadTrial(sessionId, trialId);
+    if (!experiment || !trial) {
+      return res.status(404).json({
+        success: false,
+        error: "experiment session or trial not found",
+      });
+    }
+    if (!["configured", "ready"].includes(trial.state)) {
+      return res.status(409).json({
+        success: false,
+        error: `trial cannot start from ${trial.state}`,
+      });
+    }
+
+    const now = new Date().toISOString();
+    trial.state = "running";
+    trial.startTime = now;
+    trial.updatedAt = now;
+    saveTrial(sessionId, trial);
+    experiment.status = "running";
+    experiment.currentTrialId = trialId;
+    experiment.updatedAt = now;
+    saveExperimentSession(experiment);
+    appendTrialEvents(sessionId, trialId, [{
+      role: "experimenter",
+      eventType: "trial_started",
+      clientTimestamp: req.body.clientTimestamp || null,
+      payload: {},
+    }]);
+    notifySession(sessionId, {
+      type: "trial-state-changed",
+      sessionId,
+      trial,
+    });
+    res.json({ success: true, trial });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/experiments/trials/:trialId/end", (req, res, next) => {
+  try {
+    const sessionId = safeSessionId(req.body.sessionId, "");
+    const trialId = safeIdentifier(req.params.trialId);
+    const experiment = loadExperimentSession(sessionId);
+    const trial = loadTrial(sessionId, trialId);
+    if (!experiment || !trial) {
+      return res.status(404).json({
+        success: false,
+        error: "experiment session or trial not found",
+      });
+    }
+    if (["completed", "aborted"].includes(trial.state)) {
+      return res.status(409).json({
+        success: false,
+        error: "trial is already closed",
+      });
+    }
+
+    const requestedState = req.body.state === "aborted" ? "aborted" : "completed";
+    const now = new Date().toISOString();
+    trial.state = requestedState;
+    trial.endTime = now;
+    trial.finalPhotoId = String(req.body.finalPhotoId || "").trim() || null;
+    trial.abortReason =
+      requestedState === "aborted"
+        ? requiredString(req.body.abortReason, "abortReason")
+        : null;
+    trial.updatedAt = now;
+    saveTrial(sessionId, trial);
+    experiment.status = requestedState;
+    experiment.updatedAt = now;
+    saveExperimentSession(experiment);
+    appendTrialEvents(sessionId, trialId, [{
+      role: "experimenter",
+      eventType: requestedState === "aborted" ? "trial_aborted" : "trial_completed",
+      clientTimestamp: req.body.clientTimestamp || null,
+      payload: {
+        finalPhotoId: trial.finalPhotoId,
+        abortReason: trial.abortReason,
+      },
+    }]);
+    notifySession(sessionId, {
+      type: "trial-state-changed",
+      sessionId,
+      trial,
+    });
+    res.json({ success: true, trial });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/experiments/trials/:trialId/events", (req, res, next) => {
+  try {
+    const sessionId = safeSessionId(req.body.sessionId, "");
+    const trialId = safeIdentifier(req.params.trialId);
+    const sourceEvents = Array.isArray(req.body.events)
+      ? req.body.events
+      : req.body.event
+        ? [req.body.event]
+        : [];
+    if (sourceEvents.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "events are required",
+      });
+    }
+    if (sourceEvents.length > 100) {
+      return res.status(400).json({
+        success: false,
+        error: "a maximum of 100 events can be sent at once",
+      });
+    }
+    const events = appendTrialEvents(sessionId, trialId, sourceEvents, {
+      role: req.body.role,
+    });
+    res.status(201).json({
+      success: true,
+      accepted: events.length,
+      eventIds: events.map((event) => event.eventId),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/experiments/trials/:trialId/events", (req, res, next) => {
+  try {
+    const sessionId = safeSessionId(req.query.sessionId, "");
+    const trialId = safeIdentifier(req.params.trialId);
+    if (!loadTrial(sessionId, trialId)) {
+      return res.status(404).json({
+        success: false,
+        error: "trial not found",
+      });
+    }
+    res.json({
+      success: true,
+      events: readJsonLines(getTrialEventsPath(sessionId, trialId)),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // 撮影者Webから写真を送信
-app.post("/api/photos", upload.array("photos"), (req, res) => {
+app.post("/api/photos", upload.array("photos"), (req, res, next) => {
   const sessionId = safeSessionId(req.body.sessionId);
 
   if (!req.files || req.files.length === 0) {
@@ -332,7 +868,7 @@ app.post("/api/photos", upload.array("photos"), (req, res) => {
 
   const files = req.files.map((file) => ({
     filename: file.filename,
-    url: makeFileUrl(sessionId, file.filename),
+    url: makeFileUrl(sessionId, file.filename, "photos"),
   }));
 
   res.json({
@@ -346,6 +882,23 @@ app.post("/api/photos", upload.array("photos"), (req, res) => {
     sessionId,
     files,
   });
+
+  const trialId = safeIdentifier(req.body.trialId);
+  if (trialId) {
+    try {
+      appendTrialEvents(sessionId, trialId, [{
+        role: "photographer",
+        eventType: "photos_uploaded",
+        clientTimestamp: req.body.clientTimestamp || null,
+        payload: {
+          photoCount: files.length,
+          photoIds: files.map((file) => file.filename),
+        },
+      }]);
+    } catch (error) {
+      console.error("photo upload event logging failed:", error);
+    }
+  }
 });
 
 // iOS側などからガイド画像をアップロード
@@ -359,7 +912,7 @@ app.post("/api/session/:sessionId/guide", upload.single("guide"), (req, res) => 
     });
   }
 
-  const url = makeFileUrl(sessionId, req.file.filename);
+  const url = makeFileUrl(sessionId, req.file.filename, "guides");
 
   const payload = {
     success: true,
@@ -394,7 +947,9 @@ app.post("/api/session/:sessionId/generate-guide", upload.single("reference"), (
   const allowedTypes = new Set(["rectangle", "keypoints", "silhouette"]);
   const safeGuideType = allowedTypes.has(guideType) ? guideType : "rectangle";
   const outputFilename = `guide_${safeGuideType}_${Date.now()}.png`;
-  const outputPath = path.join(path.dirname(req.file.path), outputFilename);
+  const guideDir = getDataDir(sessionId, "guides");
+  fs.mkdirSync(guideDir, { recursive: true });
+  const outputPath = path.join(guideDir, outputFilename);
 
   try {
     if (cropParams) {
@@ -410,7 +965,7 @@ app.post("/api/session/:sessionId/generate-guide", upload.single("reference"), (
     });
   }
 
-  const url = makeFileUrl(sessionId, outputFilename);
+  const url = makeFileUrl(sessionId, outputFilename, "guides");
 
   const payload = {
     success: true,
@@ -443,11 +998,13 @@ app.post("/api/session/:sessionId/generate-guide-set", upload.single("reference"
   const guideTypes = ["rectangle", "keypoints", "silhouette"];
   const batchId = Date.now();
   const guides = {};
+  const guideDir = getDataDir(sessionId, "guides");
+  fs.mkdirSync(guideDir, { recursive: true });
 
   try {
     for (const guideType of guideTypes) {
       const outputFilename = `guide_${guideType}_${batchId}.png`;
-      const outputPath = path.join(path.dirname(req.file.path), outputFilename);
+      const outputPath = path.join(guideDir, outputFilename);
 
       if (cropParams) {
         runPythonGuideGenerator(req.file.path, outputPath, guideType, cropParams);
@@ -457,7 +1014,7 @@ app.post("/api/session/:sessionId/generate-guide-set", upload.single("reference"
 
       guides[guideType] = {
         filename: outputFilename,
-        url: makeFileUrl(sessionId, outputFilename),
+        url: makeFileUrl(sessionId, outputFilename, "guides"),
       };
     }
   } catch (error) {
@@ -486,20 +1043,11 @@ app.get("/api/session/:sessionId/guide", (req, res) => {
     });
   }
 
-  const sessionDir = getSessionDir(sessionId);
-
-  if (!fs.existsSync(sessionDir)) {
-    return res.json({
-      success: true,
-      guide: null,
-    });
-  }
-
-  const guideFile = fs
-    .readdirSync(sessionDir)
-    .filter((file) => !file.startsWith(".") && file.startsWith("guide_"))
-    .sort()
-    .pop();
+  const guideFiles = [
+    ...listFiles(getDataDir(sessionId, "guides")),
+    ...listLegacyFiles(sessionId, (filename) => filename.startsWith("guide_")),
+  ].sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const guideFile = guideFiles[0];
 
   if (!guideFile) {
     return res.json({
@@ -508,12 +1056,16 @@ app.get("/api/session/:sessionId/guide", (req, res) => {
     });
   }
 
-  const url = makeFileUrl(sessionId, guideFile);
+  const url = makeFileUrl(
+    sessionId,
+    guideFile.filename,
+    guideFile.legacy ? null : "guides"
+  );
 
   res.json({
     success: true,
     guide: {
-      filename: guideFile,
+      filename: guideFile.filename,
       url,
     },
   });
@@ -530,22 +1082,23 @@ app.get("/api/photos", (req, res) => {
     });
   }
 
-  const sessionDir = getSessionDir(sessionId);
-
-  if (!fs.existsSync(sessionDir)) {
-    return res.json({
-      success: true,
-      files: [],
-    });
-  }
-
-  const files = fs
-    .readdirSync(sessionDir)
-    .filter((file) => !file.startsWith(".") && !file.includes("guide_"))
-    .map((file) => ({
-      filename: file,
-      url: makeFileUrl(sessionId, file),
-    }));
+  const files = [
+    ...listFiles(getDataDir(sessionId, "photos")).map((file) => ({
+      ...file,
+      url: makeFileUrl(sessionId, file.filename, "photos"),
+    })),
+    ...listLegacyFiles(
+      sessionId,
+      (filename) =>
+        !filename.startsWith("guide_") &&
+        !filename.startsWith("reference_")
+    ).map((file) => ({
+      ...file,
+      url: makeFileUrl(sessionId, file.filename),
+    })),
+  ]
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .map(({ filename, url }) => ({ filename, url }));
 
   res.json({
     success: true,
@@ -585,12 +1138,34 @@ app.get("/health", (req, res) => {
   });
 });
 
+app.use((error, req, res, next) => {
+  if (res.headersSent) {
+    next(error);
+    return;
+  }
+
+  if (error instanceof multer.MulterError) {
+    const statusCode = error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+    res.status(statusCode).json({
+      success: false,
+      error: error.code,
+    });
+    return;
+  }
+
+  console.error("request failed:", error);
+  res.status(error.statusCode || 400).json({
+    success: false,
+    error: error.message || "request failed",
+  });
+});
+
 server.listen(port, "0.0.0.0", () => {
   cleanupExpiredSessions();
   setInterval(cleanupExpiredSessions, cleanupIntervalMs).unref();
 
   console.log(`Photo backend listening on http://0.0.0.0:${port}`);
   console.log(`Local page: http://localhost:${port}/?sessionId=test`);
-  console.log(`LAN page: http://192.168.50.100:${port}/?sessionId=test`);
   console.log(`Session TTL: ${Math.round(sessionTtlMs / 60000)} minutes`);
+  console.log(`Upload file limit: ${Math.round(uploadFileSizeLimit / 1024 / 1024)} MB`);
 });
