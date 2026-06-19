@@ -28,19 +28,19 @@ body {
 .camera-container {
   position: relative;
   width: 100%;
-  min-height: min(58dvh, 620px);
-  flex: 1 0 min(58dvh, 620px);
+  min-height: 0;
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: env(safe-area-inset-top) 12px 8px;
+  padding: max(10px, env(safe-area-inset-top)) 8px 8px;
 }
 
 /* 3:4固定のカメラ表示領域 */
 .camera-stage {
   position: relative;
-  width: min(100%, calc(56dvh * 3 / 4));
-  max-height: 56dvh;
+  width: min(100%, min(460px, calc(100vw - 16px)));
+  max-height: min(62dvh, 640px);
   aspect-ratio: 3 / 4;
   background: #111;
   overflow: hidden;
@@ -76,22 +76,35 @@ body {
 /* 上のステータス */
 .top-bar {
   position: absolute;
-  top: calc(env(safe-area-inset-top) + 12px);
-  left: 20px;
-  right: 20px;
+  top: max(8px, env(safe-area-inset-top));
+  left: 8px;
+  right: 8px;
   z-index: 10;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   font-size: 15px;
+  pointer-events: none;
+}
+
+.top-bar > * {
+  pointer-events: auto;
 }
 
 .status {
-  padding: 8px 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: calc(100% - 110px);
+  padding: 8px 10px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(8px);
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* 下の操作パネル */

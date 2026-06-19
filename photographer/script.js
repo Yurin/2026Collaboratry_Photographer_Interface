@@ -43,8 +43,15 @@ let eventSequence = 0;
 let pendingEvents = [];
 const shareCanvas = document.createElement("canvas");
 
+function shortenSessionId(value) {
+  if (!value) return "";
+  if (value.length <= 18) return value;
+  return `${value.slice(0, 10)}...${value.slice(-6)}`;
+}
+
 function setStatus(text) {
   status.textContent = text;
+  status.title = text;
 }
 
 function setConnectionState(state) {
@@ -55,7 +62,11 @@ function setConnectionState(state) {
     reconnecting: "再接続中",
   };
 
-  setStatus(sessionId ? `セッション: ${sessionId} - ${labels[state]}` : labels[state]);
+  setStatus(
+    sessionId
+      ? `セッション: ${shortenSessionId(sessionId)} - ${labels[state]}`
+      : labels[state]
+  );
 }
 
 function showError(message) {
@@ -66,6 +77,11 @@ function showError(message) {
 function clearError() {
   errorPanel.textContent = "";
   errorPanel.hidden = true;
+}
+
+function showActionHint(message) {
+  errorPanel.textContent = message;
+  errorPanel.hidden = false;
 }
 
 function showSupportMessage(message, options = {}) {
@@ -407,12 +423,16 @@ function sendVideoFrame() {
 
 function startLiveShare() {
   if (!sessionId) {
-    showError("セッションIDがありません。被写体側のQRコードから開いてください。");
+    showActionHint(
+      "『ライブ共有』は、被写体側のセッションにカメラ映像を送るボタンです。まずは被写体側のQRコードからこの画面を開いてください。"
+    );
     return;
   }
 
   if (!video.srcObject) {
-    showError("カメラが起動していません。ブラウザのカメラ許可を確認してください。");
+    showActionHint(
+      "『ライブ共有』を使うには、まずカメラを起動してください。端末のカメラ権限を許可すると、ここでライブ共有を開始できます。"
+    );
     return;
   }
 
@@ -452,7 +472,9 @@ async function startCamera() {
     logExperimentEvent("camera_started");
   } catch (error) {
     console.error(error);
-    showError("カメラを起動できませんでした。ブラウザの権限、HTTPS接続、別アプリでのカメラ使用状況を確認してください。");
+    showActionHint(
+      "カメラを起動できませんでした。権限を許可してから、画面上の『ライブ共有』や『撮影』をお試しください。"
+    );
     logExperimentEvent("camera_failed", { message: error.message });
   }
 }
@@ -485,7 +507,9 @@ shareLiveBtn.addEventListener("click", () => {
 
 captureBtn.addEventListener("click", () => {
   if (!video.videoWidth || !video.videoHeight) {
-    showError("カメラ映像がまだ準備できていません。少し待ってから撮影してください。");
+    showActionHint(
+      "『撮影』はカメラ映像が見えてから使えます。映像が表示されるまで少し待ってから、もう一度押してください。"
+    );
     return;
   }
 
@@ -615,7 +639,12 @@ function updateThumbnails() {
 }
 
 clearBtn.addEventListener("click", () => {
-  if (photos.length === 0) return;
+  if (photos.length === 0) {
+    showActionHint(
+      "『クリア』は撮影した写真をまとめて消すボタンです。今は削除する写真がないため、何もしません。"
+    );
+    return;
+  }
   if (confirm("すべての写真を削除しますか？")) {
     photos = [];
     updateThumbnails();
@@ -626,7 +655,9 @@ clearBtn.addEventListener("click", () => {
 
 deleteSessionBtn.addEventListener("click", async () => {
   if (!sessionId) {
-    showError("削除するセッションIDがありません。");
+    showActionHint(
+      "『削除』はこのセッションの保存データを消すボタンです。まずは被写体側のQRコードからセッションを開いてください。"
+    );
     return;
   }
   if (!confirm("このセッションのサーバー保存データを削除しますか？")) return;
@@ -657,9 +688,16 @@ deleteSessionBtn.addEventListener("click", async () => {
 });
 
 sendBtn.addEventListener("click", async () => {
-  if (photos.length === 0) return;
+  if (photos.length === 0) {
+    showActionHint(
+      "『送信』は撮影した写真をサーバーに送るボタンです。まず『撮影』で写真を1枚以上保存してください。"
+    );
+    return;
+  }
   if (!sessionId) {
-    showError("セッションIDがありません。被写体側のQRコードから開いてください。");
+    showActionHint(
+      "『送信』にはセッションが必要です。被写体側のQRコードからこの画面を開いてください。"
+    );
     return;
   }
 
