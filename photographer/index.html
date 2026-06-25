@@ -8,59 +8,91 @@
 </head>
 <body>
   <main class="app">
-    <section class="camera-container">
-        <div class="camera-stage">
-          <video id="video" autoplay playsinline muted></video>
-          <img id="guide" alt="撮影ガイド" hidden />
+    <div class="view-container">
+      <section id="capturePanel" class="panel capture-panel">
+        <section class="camera-container">
+          <div class="camera-stage">
+            <video id="video" autoplay playsinline muted></video>
+            <img id="guide" alt="撮影ガイド" hidden />
+          </div>
+
+          <div class="top-bar">
+            <div class="status">接続準備中</div>
+            <button id="toggleGuideBtn" class="action-btn guide-control" hidden>ガイドON/OFF</button>
+          </div>
+        </section>
+
+        <section class="controls">
+          <div id="supportPanel" class="support-panel" aria-live="polite" hidden>
+            <div class="support-label">撮影サポート</div>
+            <div id="supportMessage" class="support-message"></div>
+          </div>
+
+          <div id="experimentStatus" class="experiment-status" hidden></div>
+
+          <label class="slider-area guide-control" hidden>
+            ガイド透過度
+            <input
+              id="opacitySlider"
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value="0.5"
+            />
+          </label>
+
+          <div class="button-area">
+            <button id="captureBtn" class="capture-btn" aria-label="撮影"></button>
+            <span id="photoCount" class="photo-count">0枚</span>
+          </div>
+
+          <div class="action-buttons">
+            <button id="shareLiveBtn" class="action-btn send-btn">ライブ共有</button>
+            <button id="sendBtn" class="action-btn send-btn">送信</button>
+            <button id="clearBtn" class="action-btn clear-btn">クリア</button>
+            <button id="deleteSessionBtn" class="action-btn danger-btn">削除</button>
+          </div>
+
+          <button id="viewGalleryBtn" class="action-btn secondary-btn">写真一覧を見る</button>
+
+          <div id="errorPanel" class="error-panel" role="alert" hidden></div>
+        </section>
+      </section>
+
+      <section id="galleryPanel" class="panel gallery-panel" hidden>
+        <div class="gallery-header">
+          <div class="gallery-title-group">
+            <button id="backToCaptureBtn" class="action-btn secondary-btn">撮影に戻る</button>
+            <div>
+              <div class="gallery-title">写真一覧</div>
+              <div id="gallerySummary" class="gallery-summary">撮影済み 0 枚</div>
+            </div>
+          </div>
         </div>
 
-      <div class="top-bar">
-        <div class="status">接続準備中</div>
-        <button id="toggleGuideBtn" class="action-btn guide-control" hidden>ガイドON/OFF</button>
-      </div>
-    </section>
+        <div id="galleryEmptyMessage" class="gallery-empty" hidden>
+          まだ撮影された写真はありません。撮影画面で写真を撮ってください。
+        </div>
 
-    <section class="controls">
-      <div id="supportPanel" class="support-panel" aria-live="polite" hidden>
-        <div class="support-label">撮影サポート</div>
-        <div id="supportMessage" class="support-message"></div>
-      </div>
+        <section
+          id="thumbnailContainer"
+          class="thumbnail-container"
+          aria-label="撮影した写真一覧"
+          hidden
+        ></section>
+      </section>
+    </div>
 
-      <div id="experimentStatus" class="experiment-status" hidden></div>
+    <nav class="tab-bar" role="tablist" aria-label="画面切り替え">
+      <button id="tabCaptureBtn" class="tab-btn active" type="button" role="tab" aria-selected="true">撮影</button>
+      <button id="tabGalleryBtn" class="tab-btn" type="button" role="tab" aria-selected="false">写真一覧</button>
+    </nav>
 
-      <label class="slider-area guide-control" hidden>
-        ガイド透過度
-        <input
-          id="opacitySlider"
-          type="range"
-          min="0"
-          max="1"
-          step="0.1"
-          value="0.5"
-        />
-      </label>
-
-      <div class="button-area">
-        <button id="captureBtn" class="capture-btn" aria-label="撮影"></button>
-        <span id="photoCount" class="photo-count">0枚</span>
-      </div>
-
-      <div class="action-buttons">
-        <button id="shareLiveBtn" class="action-btn send-btn">ライブ共有</button>
-        <button id="sendBtn" class="action-btn send-btn">送信</button>
-        <button id="clearBtn" class="action-btn clear-btn">クリア</button>
-        <button id="deleteSessionBtn" class="action-btn danger-btn">削除</button>
-      </div>
-
-      <div id="errorPanel" class="error-panel" role="alert" hidden></div>
-    </section>
-
-    <section
-      id="thumbnailContainer"
-      class="thumbnail-container"
-      aria-label="撮影した写真一覧"
-      hidden
-    ></section>
+    <div id="photoPreviewOverlay" class="photo-preview-overlay" hidden>
+      <button id="closePreviewBtn" class="preview-close" type="button" aria-label="写真プレビューを閉じる">×</button>
+      <img id="previewImage" alt="写真プレビュー" />
+    </div>
 
     <canvas id="canvas"></canvas>
   </main>

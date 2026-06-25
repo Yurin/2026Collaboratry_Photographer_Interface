@@ -10,6 +10,17 @@ const sendBtn = document.getElementById("sendBtn");
 const clearBtn = document.getElementById("clearBtn");
 const shareLiveBtn = document.getElementById("shareLiveBtn");
 const deleteSessionBtn = document.getElementById("deleteSessionBtn");
+const viewGalleryBtn = document.getElementById("viewGalleryBtn");
+const tabCaptureBtn = document.getElementById("tabCaptureBtn");
+const tabGalleryBtn = document.getElementById("tabGalleryBtn");
+const backToCaptureBtn = document.getElementById("backToCaptureBtn");
+const gallerySummary = document.getElementById("gallerySummary");
+const galleryEmptyMessage = document.getElementById("galleryEmptyMessage");
+const photoPreviewOverlay = document.getElementById("photoPreviewOverlay");
+const previewImage = document.getElementById("previewImage");
+const closePreviewBtn = document.getElementById("closePreviewBtn");
+const capturePanel = document.getElementById("capturePanel");
+const galleryPanel = document.getElementById("galleryPanel");
 const errorPanel = document.getElementById("errorPanel");
 const supportPanel = document.getElementById("supportPanel");
 const supportMessage = document.getElementById("supportMessage");
@@ -18,6 +29,9 @@ const guideControls = document.querySelectorAll(".guide-control");
 const status = document.querySelector(".status");
 
 const API_BASE_PATH = "/api";
+
+let activeTab = "capture";
+let selectedPhotoIndex = null;
 
 let showGuide = true;
 let currentStream = null;
@@ -558,6 +572,26 @@ captureBtn.addEventListener("click", () => {
 function updatePhotoCount() {
   photoCount.textContent = `${photos.length}枚`;
   sendBtn.disabled = photos.length === 0 || !sessionId;
+  gallerySummary.textContent = `撮影済み ${photos.length} 枚`;
+  galleryEmptyMessage.hidden = photos.length > 0;
+}
+
+function setActiveTab(tab) {
+  activeTab = tab;
+  const isCapture = tab === "capture";
+
+  capturePanel.hidden = !isCapture;
+  galleryPanel.hidden = isCapture;
+  tabCaptureBtn.classList.toggle("active", isCapture);
+  tabGalleryBtn.classList.toggle("active", !isCapture);
+  tabCaptureBtn.setAttribute("aria-selected", isCapture ? "true" : "false");
+  tabGalleryBtn.setAttribute("aria-selected", isCapture ? "false" : "true");
+  viewGalleryBtn.hidden = !isCapture;
+
+  if (!isCapture) {
+    updateThumbnails();
+    galleryEmptyMessage.hidden = photos.length > 0;
+  }
 }
 
 function applyGuideUrl(url) {
@@ -609,8 +643,13 @@ function updateThumbnails() {
   thumbnailContainer.hidden = photos.length === 0;
 
   photos.forEach((imageUrl, index) => {
-    const thumbnail = document.createElement("div");
+    const thumbnail = document.createElement("button");
+    thumbnail.type = "button";
     thumbnail.className = "thumbnail";
+    if (selectedPhotoIndex === index) {
+      thumbnail.classList.add("selected");
+    }
+    thumbnail.setAttribute("aria-label", `写真 ${index + 1} をプレビュー`);
 
     const img = document.createElement("img");
     img.src = imageUrl;
@@ -623,6 +662,11 @@ function updateThumbnails() {
     deleteBtn.setAttribute("aria-label", `写真 ${index + 1} を削除`);
     deleteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (selectedPhotoIndex === index) {
+        selectedPhotoIndex = null;
+      } else if (selectedPhotoIndex !== null && selectedPhotoIndex > index) {
+        selectedPhotoIndex -= 1;
+      }
       photos.splice(index, 1);
       updateThumbnails();
       updatePhotoCount();
@@ -632,11 +676,39 @@ function updateThumbnails() {
       });
     });
 
+    thumbnail.addEventListener("click", () => {
+      selectedPhotoIndex = index;
+      updateThumbnails();
+      showPhotoPreview(index);
+    });
+
     thumbnail.appendChild(img);
     thumbnail.appendChild(deleteBtn);
     thumbnailContainer.appendChild(thumbnail);
   });
 }
+
+function showPhotoPreview(index) {
+  selectedPhotoIndex = index;
+  previewImage.src = photos[index];
+  photoPreviewOverlay.hidden = false;
+}
+
+function closePhotoPreview() {
+  photoPreviewOverlay.hidden = true;
+  previewImage.src = "";
+}
+
+viewGalleryBtn.addEventListener("click", () => setActiveTab("gallery"));
+tabCaptureBtn.addEventListener("click", () => setActiveTab("capture"));
+tabGalleryBtn.addEventListener("click", () => setActiveTab("gallery"));
+backToCaptureBtn.addEventListener("click", () => setActiveTab("capture"));
+closePreviewBtn.addEventListener("click", closePhotoPreview);
+photoPreviewOverlay.addEventListener("click", (event) => {
+  if (event.target === photoPreviewOverlay) {
+    closePhotoPreview();
+  }
+});
 
 clearBtn.addEventListener("click", () => {
   if (photos.length === 0) {
@@ -763,5 +835,6 @@ function dataURLtoBlob(dataURL) {
 }
 
 updatePhotoCount();
+setActiveTab("capture");
 loadSessionFromUrl();
 startCamera();

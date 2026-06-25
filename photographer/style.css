@@ -16,12 +16,23 @@ body {
 
 .app {
   width: 100%;
-  height: 100dvh;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   background: #000;
+}
+
+.view-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* カメラ全体エリア */
@@ -234,19 +245,165 @@ body {
 
 .thumbnail-container {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 104px;
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
   width: 100%;
-  padding: 12px 16px calc(env(safe-area-inset-bottom) + 12px);
-  overflow-x: auto;
+  padding: 16px;
   background: rgba(12, 12, 12, 0.98);
   border-top: 1px solid rgba(255, 255, 255, 0.12);
-  scrollbar-width: thin;
 }
 
 .thumbnail-container[hidden] {
   display: none;
+}
+
+.gallery-header {
+  width: 100%;
+  padding: 14px 16px 8px;
+}
+
+.gallery-title-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.gallery-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.gallery-summary {
+  margin-top: 4px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 14px;
+}
+
+.gallery-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 15px;
+}
+
+.tab-bar {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px calc(env(safe-area-inset-bottom) + 10px);
+  background: rgba(10, 10, 10, 0.98);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.tab-btn {
+  flex: 1;
+  min-height: 52px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.tab-btn.active {
+  background: rgba(37, 99, 235, 0.95);
+  border-color: rgba(37, 99, 235, 0.95);
+}
+
+.secondary-btn {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.photo-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.92);
+}
+
+.photo-preview-overlay[hidden] {
+  display: none;
+}
+
+.preview-close {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top) + 14px);
+  right: 14px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.72);
+  color: white;
+  font-size: 24px;
+  line-height: 36px;
+}
+
+.photo-preview-overlay img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 18px;
+  box-shadow: 0 0 45px rgba(0, 0, 0, 0.55);
+}
+
+.thumbnail {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  background: #222;
+}
+
+.thumbnail.selected {
+  outline: 3px solid rgba(37, 99, 235, 0.85);
+}
+
+.thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumbnail-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 20px;
+  line-height: 28px;
+}
+
+@media (max-width: 420px) {
+  .thumbnail-container {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+
+  .action-buttons {
+    flex-direction: column;
+  }
+
+  .action-buttons .action-btn {
+    width: 100%;
+  }
+
+  .button-area {
+    gap: 12px;
+    flex-direction: column;
+  }
 }
 
 .thumbnail {
