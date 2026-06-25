@@ -116,7 +116,6 @@ body {
   align-items: center;
   justify-content: center;
   padding: max(10px, env(safe-area-inset-top)) 8px 8px;
-  padding-bottom: calc(220px + env(safe-area-inset-bottom));
 }
 
 .camera-stage {
@@ -126,19 +125,30 @@ body {
   max-height: none;
   min-height: 260px;
   aspect-ratio: 3 / 4;
-  background: #111;
+  background: #000;
   overflow: hidden;
   border-radius: 16px;
 }
 
-.controls {
+.camera-stage .button-area.camera-overlay {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 999px;
+  backdrop-filter: blur(10px);
   z-index: 10;
+}
+
+.controls {
+  position: relative;
   padding: 16px 20px calc(24px + env(safe-area-inset-bottom));
-  background: rgba(20, 20, 20, 0.94);
+  background: rgba(20, 20, 20, 0.96);
   border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 

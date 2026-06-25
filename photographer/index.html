@@ -14,6 +14,10 @@
           <div class="camera-stage">
             <video id="video" autoplay playsinline muted></video>
             <img id="guide" alt="撮影ガイド" hidden />
+            <div class="button-area camera-overlay">
+              <button id="captureBtn" class="capture-btn" aria-label="撮影"></button>
+              <span id="photoCount" class="photo-count">0枚</span>
+            </div>
           </div>
 
           <div class="top-bar">
@@ -41,11 +45,6 @@
               value="0.5"
             />
           </label>
-
-          <div class="button-area">
-            <button id="captureBtn" class="capture-btn" aria-label="撮影"></button>
-            <span id="photoCount" class="photo-count">0枚</span>
-          </div>
 
           <div class="action-buttons">
             <button id="shareLiveBtn" class="action-btn send-btn">ライブ共有</button>
