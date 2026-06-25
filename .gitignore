@@ -11,6 +11,9 @@ build/
 backend/.venv/
 .venv/
 
+# Local environment files
+backend/.env
+
 # Model weights
 backend/*.pt
 
@@ -22,3 +25,5 @@ photo2026/photo2026.xcodeproj/xcuserdata/
 photo2026/DerivedData/
 DerivedData/
 
+yolov8n-pose.pt
+yolov8n-seg.pt

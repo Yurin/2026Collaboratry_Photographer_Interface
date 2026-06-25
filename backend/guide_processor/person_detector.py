@@ -68,6 +68,24 @@ def _best_person_index(boxes, conf_threshold: float = 0.3) -> Optional[int]:
     return best_index
 
 
+def _person_indices(boxes, conf_threshold: float = 0.3):
+    if boxes is None or len(boxes) == 0:
+        return []
+
+    try:
+        cls = boxes.cls.cpu().numpy()
+        conf = boxes.conf.cpu().numpy()
+    except Exception:
+        cls = boxes.cls.numpy()
+        conf = boxes.conf.numpy()
+
+    return [
+        index
+        for index, (class_id, confidence) in enumerate(zip(cls, conf))
+        if int(class_id) == 0 and float(confidence) >= conf_threshold
+    ]
+
+
 def _box_tuple(boxes, index: int) -> Tuple[int, int, int, int]:
     try:
         xyxy = boxes.xyxy.cpu().numpy()
@@ -138,6 +156,21 @@ def detect_person_mask(image, conf_threshold: float = 0.3):
 
 def detect_person_keypoints(image, conf_threshold: float = 0.25):
     """Return COCO keypoints [(x, y, conf), ...] for the most prominent person."""
+    _, keypoints = detect_person_pose(image, conf_threshold=conf_threshold)
+    return keypoints
+
+
+def detect_person_pose(image, conf_threshold: float = 0.25):
+    """Return the prominent person's bbox and COCO keypoints from one pose inference."""
+    person_box, keypoints, _ = detect_person_pose_with_count(
+        image,
+        conf_threshold=conf_threshold,
+    )
+    return person_box, keypoints
+
+
+def detect_person_pose_with_count(image, conf_threshold: float = 0.25):
+    """Return the prominent pose and the number of detected people."""
     if np is None or YOLO is None:
         raise RuntimeError("Required libraries for pose detection are not installed")
 
@@ -145,14 +178,15 @@ def detect_person_keypoints(image, conf_threshold: float = 0.25):
     arr = np.array(image.convert("RGB"))
     results = model(arr)
     if not results:
-        return None
+        return None, None, 0
 
     r = results[0]
     boxes = getattr(r, "boxes", None)
     keypoints = getattr(r, "keypoints", None)
+    person_count = len(_person_indices(boxes, conf_threshold=conf_threshold))
     best_index = _best_person_index(boxes, conf_threshold=conf_threshold)
     if best_index is None or keypoints is None:
-        return None
+        return None, None, person_count
 
     try:
         xy = keypoints.xy.cpu().numpy()[best_index]
@@ -161,7 +195,8 @@ def detect_person_keypoints(image, conf_threshold: float = 0.25):
         xy = keypoints.xy.numpy()[best_index]
         conf = keypoints.conf.numpy()[best_index]
 
-    return [
+    points = [
         (float(point[0]), float(point[1]), float(confidence))
         for point, confidence in zip(xy, conf)
     ]
+    return _box_tuple(boxes, best_index), points, person_count

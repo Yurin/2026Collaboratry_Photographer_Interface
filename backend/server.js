@@ -10,6 +10,7 @@ const { WebSocket, WebSocketServer } = require("ws");
 
 const app = express();
 const port = process.env.PORT || 3000;
+const host = process.env.HOST || "127.0.0.1";
 const sessionTtlMs = Number(process.env.SESSION_TTL_MS || 1000 * 60 * 60 * 6);
 const cleanupIntervalMs = Number(process.env.CLEANUP_INTERVAL_MS || 1000 * 60 * 10);
 const uploadFileSizeLimit = Number(process.env.UPLOAD_FILE_SIZE_LIMIT || 20 * 1024 * 1024);
@@ -93,6 +94,15 @@ function makeFileUrl(sessionId, filename, dataType = null) {
   return `/uploads/${encodedParts.join("/")}`;
 }
 
+function makeSessionRelativeFileUrl(sessionId, relativePath) {
+  const encodedPath = String(relativePath)
+    .split(path.sep)
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join("/");
+  return `/uploads/${encodeURIComponent(sessionId)}/${encodedPath}`;
+}
+
 function getSessionDir(sessionId) {
   return path.join(uploadRoot, safeSessionId(sessionId));
 }
@@ -123,6 +133,18 @@ function getTrialPath(sessionId, trialId) {
 
 function getTrialEventsPath(sessionId, trialId) {
   return path.join(getTrialDir(sessionId, trialId), "events.jsonl");
+}
+
+function getReferencePoseDir(sessionId, referenceImageId) {
+  return path.join(
+    getExperimentDir(sessionId),
+    "references",
+    safeIdentifier(referenceImageId)
+  );
+}
+
+function getReferencePosePath(sessionId, referenceImageId) {
+  return path.join(getReferencePoseDir(sessionId, referenceImageId), "current.json");
 }
 
 function safeIdentifier(value, fallback = "") {
@@ -289,6 +311,60 @@ function runPythonGuideGenerator(inputPath, outputPath, guideType, cropParams = 
   execFileSync(pythonCommand, args, {
     stdio: ["ignore", "pipe", "pipe"],
   });
+}
+
+function runReferencePoseExtractor(inputPath, outputPath, imageOutputPath, maskOutputPath) {
+  const scriptPath = path.join(
+    __dirname,
+    "guide_processor",
+    "extract_reference_pose.py"
+  );
+  const pythonCommand = process.env.PYTHON || "python3";
+  execFileSync(
+    pythonCommand,
+    [
+      scriptPath,
+      "--input",
+      inputPath,
+      "--output",
+      outputPath,
+      "--image-output",
+      imageOutputPath,
+      "--mask-output",
+      maskOutputPath,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] }
+  );
+}
+
+function validateReferencePose(body) {
+  if (!body || !Array.isArray(body.keypoints) || body.keypoints.length === 0) {
+    const error = new Error("keypoints are required");
+    error.statusCode = 400;
+    throw error;
+  }
+  const keypoints = body.keypoints.map((point) => {
+    const name = requiredString(point.name, "keypoint name");
+    const x = Number(point.x);
+    const y = Number(point.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      const error = new Error(`invalid coordinates for ${name}`);
+      error.statusCode = 400;
+      throw error;
+    }
+    return {
+      name,
+      x: Math.max(0, Math.min(1, x)),
+      y: Math.max(0, Math.min(1, y)),
+      confidence: Math.max(0, Math.min(1, Number(point.confidence) || 0)),
+      isEnabled: point.isEnabled !== false,
+    };
+  });
+  return {
+    ...body,
+    source: body.source || "manual-corrected",
+    keypoints,
+  };
 }
 
 function parseCropParams(body) {
@@ -662,6 +738,27 @@ app.post("/api/experiments/sessions/:sessionId/trials", (req, res, next) => {
 
     const now = new Date().toISOString();
     const trialId = safeIdentifier(req.body.trialId) || randomUUID();
+    const referenceImageId =
+      String(req.body.referenceImageId || experiment.referenceImageId || "").trim() || null;
+    const referencePose = referenceImageId
+      ? readJsonFile(getReferencePosePath(sessionId, referenceImageId))
+      : null;
+    if (referenceImageId && !referencePose) {
+      return res.status(409).json({
+        success: false,
+        error: "reference pose must be extracted and confirmed before creating a trial",
+      });
+    }
+    if (
+      referencePose &&
+      Number(referencePose.personCount) !== 1 &&
+      referencePose.personCountApproved !== true
+    ) {
+      return res.status(409).json({
+        success: false,
+        error: "reference pose person count must be approved before creating a trial",
+      });
+    }
     const trial = {
       schemaVersion: "1.0",
       trialId,
@@ -669,8 +766,8 @@ app.post("/api/experiments/sessions/:sessionId/trials", (req, res, next) => {
       participantId: experiment.participantId,
       pairId: experiment.pairId,
       conditionId: experiment.conditionId,
-      referenceImageId:
-        String(req.body.referenceImageId || experiment.referenceImageId || "").trim() || null,
+      referenceImageId,
+      referencePoseVersion: referencePose?.versionId || null,
       selectedGuideType: String(req.body.selectedGuideType || "").trim() || null,
       supportLevel: Number(req.body.supportLevel || experiment.supportLevel || 1),
       isPractice: Boolean(req.body.isPractice),
@@ -854,6 +951,215 @@ app.get("/api/experiments/trials/:trialId/events", (req, res, next) => {
     next(error);
   }
 });
+
+app.post(
+  "/api/experiments/sessions/:sessionId/references/:referenceImageId/extract-pose",
+  upload.single("reference"),
+  (req, res, next) => {
+    try {
+      const sessionId = safeSessionId(req.params.sessionId, "");
+      const referenceImageId = safeIdentifier(req.params.referenceImageId);
+      if (!loadExperimentSession(sessionId)) {
+        return res.status(404).json({
+          success: false,
+          error: "experiment session not found",
+        });
+      }
+      if (!referenceImageId || !req.file) {
+        return res.status(400).json({
+          success: false,
+          error: "referenceImageId and reference image are required",
+        });
+      }
+
+      const poseDir = getReferencePoseDir(sessionId, referenceImageId);
+      const versionsDir = path.join(poseDir, "versions");
+      fs.mkdirSync(versionsDir, { recursive: true });
+      const versionId = `auto-${Date.now()}`;
+      const extractedPath = path.join(versionsDir, `${versionId}.json`);
+      const processedFilename = `${referenceImageId}_processed.jpg`;
+      const maskFilename = `${referenceImageId}_mask.png`;
+      const processedPath = path.join(poseDir, processedFilename);
+      const maskPath = path.join(poseDir, maskFilename);
+
+      runReferencePoseExtractor(
+        req.file.path,
+        extractedPath,
+        processedPath,
+        maskPath
+      );
+      const extracted = readJsonFile(extractedPath);
+      const now = new Date().toISOString();
+      const pose = {
+        ...extracted,
+        schemaVersion: "1.0",
+        sessionId,
+        referenceImageId,
+        versionId,
+        parentVersionId: null,
+        personCountApproved: extracted.personCount === 1,
+        personCountApprovedBy: extracted.personCount === 1 ? "system" : null,
+        personCountApprovedAt: extracted.personCount === 1 ? now : null,
+        createdAt: now,
+        updatedAt: now,
+        image: {
+          filename: processedFilename,
+          url: makeSessionRelativeFileUrl(
+            sessionId,
+            path.relative(getSessionDir(sessionId), processedPath)
+          ),
+        },
+        originalImage: {
+          filename: req.file.filename,
+          url: makeFileUrl(sessionId, req.file.filename, "references"),
+        },
+        silhouette: fs.existsSync(maskPath)
+          ? {
+              filename: maskFilename,
+              url: makeSessionRelativeFileUrl(
+                sessionId,
+                path.relative(getSessionDir(sessionId), maskPath)
+              ),
+            }
+          : null,
+      };
+      writeJsonFile(extractedPath, pose);
+      writeJsonFile(getReferencePosePath(sessionId, referenceImageId), pose);
+
+      const experiment = loadExperimentSession(sessionId);
+      experiment.referenceImageId = referenceImageId;
+      experiment.updatedAt = now;
+      saveExperimentSession(experiment);
+      notifySession(sessionId, {
+        type: "reference-pose-updated",
+        sessionId,
+        referenceImageId,
+        versionId,
+      });
+      res.status(201).json({ success: true, pose });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.get(
+  "/api/experiments/sessions/:sessionId/references/:referenceImageId/pose",
+  (req, res, next) => {
+    try {
+      const sessionId = safeSessionId(req.params.sessionId, "");
+      const referenceImageId = safeIdentifier(req.params.referenceImageId);
+      const pose = readJsonFile(getReferencePosePath(sessionId, referenceImageId));
+      if (!pose) {
+        return res.status(404).json({
+          success: false,
+          error: "reference pose not found",
+        });
+      }
+      res.json({ success: true, pose });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.get(
+  "/api/experiments/sessions/:sessionId/references/:referenceImageId/pose/versions/:versionId",
+  (req, res, next) => {
+    try {
+      const sessionId = safeSessionId(req.params.sessionId, "");
+      const referenceImageId = safeIdentifier(req.params.referenceImageId);
+      const versionId = safeIdentifier(req.params.versionId);
+      const pose = readJsonFile(
+        path.join(
+          getReferencePoseDir(sessionId, referenceImageId),
+          "versions",
+          `${versionId}.json`
+        )
+      );
+      if (!pose) {
+        return res.status(404).json({
+          success: false,
+          error: "reference pose version not found",
+        });
+      }
+      res.json({ success: true, pose });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.put(
+  "/api/experiments/sessions/:sessionId/references/:referenceImageId/pose",
+  (req, res, next) => {
+    try {
+      const sessionId = safeSessionId(req.params.sessionId, "");
+      const referenceImageId = safeIdentifier(req.params.referenceImageId);
+      const current = readJsonFile(getReferencePosePath(sessionId, referenceImageId));
+      if (!current) {
+        return res.status(404).json({
+          success: false,
+          error: "extract a reference pose before saving corrections",
+        });
+      }
+
+      const requiresPersonCountApproval = Number(current.personCount) !== 1;
+      const personCountApproved =
+        current.personCountApproved === true || req.body.personCountApproved === true;
+      if (requiresPersonCountApproval && !personCountApproved) {
+        return res.status(409).json({
+          success: false,
+          error: "person count approval is required before saving this reference pose",
+        });
+      }
+
+      const corrected = validateReferencePose(req.body);
+      const now = new Date().toISOString();
+      const versionId = `manual-${Date.now()}`;
+      const pose = {
+        ...current,
+        ...corrected,
+        schemaVersion: "1.0",
+        sessionId,
+        referenceImageId,
+        source: "manual-corrected",
+        versionId,
+        parentVersionId: current.versionId,
+        createdAt: current.createdAt,
+        updatedAt: now,
+        correctedBy: String(req.body.correctedBy || "").trim() || null,
+        personCountApproved:
+          Number(current.personCount) === 1 || personCountApproved,
+        personCountApprovedBy:
+          Number(current.personCount) === 1
+            ? current.personCountApprovedBy || "system"
+            : current.personCountApprovedBy ||
+              String(req.body.correctedBy || "").trim() ||
+              null,
+        personCountApprovedAt:
+          Number(current.personCount) === 1
+            ? current.personCountApprovedAt || current.createdAt || now
+            : current.personCountApprovedAt || now,
+      };
+      const versionsDir = path.join(
+        getReferencePoseDir(sessionId, referenceImageId),
+        "versions"
+      );
+      writeJsonFile(path.join(versionsDir, `${versionId}.json`), pose);
+      writeJsonFile(getReferencePosePath(sessionId, referenceImageId), pose);
+      notifySession(sessionId, {
+        type: "reference-pose-updated",
+        sessionId,
+        referenceImageId,
+        versionId,
+      });
+      res.json({ success: true, pose });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 // 撮影者Webから写真を送信
 app.post("/api/photos", upload.array("photos"), (req, res, next) => {
@@ -1160,12 +1466,12 @@ app.use((error, req, res, next) => {
   });
 });
 
-server.listen(port, "0.0.0.0", () => {
+server.listen(port, host, () => {
   cleanupExpiredSessions();
   setInterval(cleanupExpiredSessions, cleanupIntervalMs).unref();
 
-  console.log(`Photo backend listening on http://0.0.0.0:${port}`);
-  console.log(`Local page: http://localhost:${port}/?sessionId=test`);
+  console.log(`Photo backend listening on http://${host}:${port} (internal only)`);
+  console.log(`Local page: http://${host}:${port}/?sessionId=test`);
   console.log(`Session TTL: ${Math.round(sessionTtlMs / 60000)} minutes`);
   console.log(`Upload file limit: ${Math.round(uploadFileSizeLimit / 1024 / 1024)} MB`);
 });
