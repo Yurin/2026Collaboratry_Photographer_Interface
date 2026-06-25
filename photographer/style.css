@@ -211,10 +211,10 @@ body {
 }
 
 .capture-btn {
-  width: 72px;
-  height: 72px;
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
-  border: 6px solid rgba(255, 255, 255, 0.85);
+  border: 5px solid rgba(255, 255, 255, 0.85);
   background: white;
 }
 
