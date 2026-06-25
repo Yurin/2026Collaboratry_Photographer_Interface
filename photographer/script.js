@@ -17,7 +17,7 @@ const experimentStatus = document.getElementById("experimentStatus");
 const guideControls = document.querySelectorAll(".guide-control");
 const status = document.querySelector(".status");
 
-const API_BASE_URL = window.location.origin;
+const API_BASE_PATH = "/api";
 
 let showGuide = true;
 let currentStream = null;
@@ -135,7 +135,7 @@ async function fetchExperimentState() {
   if (!sessionId) return;
   try {
     const response = await fetch(
-      `${API_BASE_URL}/api/experiments/sessions/${encodeURIComponent(sessionId)}`
+      `${API_BASE_PATH}/experiments/sessions/${encodeURIComponent(sessionId)}`
     );
     if (response.status === 404) {
       applyExperimentState(null);
@@ -205,7 +205,7 @@ async function flushPendingEvents() {
   if (batch.length === 0) return;
   try {
     const response = await fetch(
-      `${API_BASE_URL}/api/experiments/trials/${encodeURIComponent(targetTrialId)}/events`,
+      `${API_BASE_PATH}/experiments/trials/${encodeURIComponent(targetTrialId)}/events`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -591,7 +591,7 @@ async function updateSessionGuide() {
   if (!sessionId || experimentCondition === "A") return;
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/session/${encodeURIComponent(sessionId)}/guide`);
+    const response = await fetch(`${API_BASE_PATH}/session/${encodeURIComponent(sessionId)}/guide`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     const data = await response.json();
@@ -663,7 +663,7 @@ deleteSessionBtn.addEventListener("click", async () => {
   if (!confirm("このセッションのサーバー保存データを削除しますか？")) return;
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/session/${encodeURIComponent(sessionId)}`, {
+    const response = await fetch(`${API_BASE_PATH}/session/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -716,7 +716,7 @@ sendBtn.addEventListener("click", async () => {
       formData.append("photos", blob, `photo_${index}.jpg`);
     });
 
-    const response = await fetch(`${API_BASE_URL}/api/photos`, {
+    const response = await fetch(`${API_BASE_PATH}/photos`, {
       method: "POST",
       body: formData,
     });
