@@ -11,9 +11,7 @@ const clearBtn = document.getElementById("clearBtn");
 const shareLiveBtn = document.getElementById("shareLiveBtn");
 const deleteSessionBtn = document.getElementById("deleteSessionBtn");
 const viewGalleryBtn = document.getElementById("viewGalleryBtn");
-const tabCaptureBtn = document.getElementById("tabCaptureBtn");
-const tabGalleryBtn = document.getElementById("tabGalleryBtn");
-const backToCaptureBtn = document.getElementById("backToCaptureBtn");
+const closeGalleryBtn = document.getElementById("closeGalleryBtn");
 const gallerySummary = document.getElementById("gallerySummary");
 const galleryEmptyMessage = document.getElementById("galleryEmptyMessage");
 const photoPreviewOverlay = document.getElementById("photoPreviewOverlay");
@@ -30,7 +28,6 @@ const status = document.querySelector(".status");
 
 const API_BASE_PATH = "/api";
 
-let activeTab = "capture";
 let selectedPhotoIndex = null;
 
 let showGuide = true;
@@ -572,26 +569,32 @@ captureBtn.addEventListener("click", () => {
 function updatePhotoCount() {
   photoCount.textContent = `${photos.length}枚`;
   sendBtn.disabled = photos.length === 0 || !sessionId;
-  gallerySummary.textContent = `撮影済み ${photos.length} 枚`;
+  gallerySummary.textContent = `撮影済み写真 ${photos.length}枚`;
+  updateGalleryButton();
   galleryEmptyMessage.hidden = photos.length > 0;
 }
 
-function setActiveTab(tab) {
-  activeTab = tab;
-  const isCapture = tab === "capture";
-
-  capturePanel.hidden = !isCapture;
-  galleryPanel.hidden = isCapture;
-  tabCaptureBtn.classList.toggle("active", isCapture);
-  tabGalleryBtn.classList.toggle("active", !isCapture);
-  tabCaptureBtn.setAttribute("aria-selected", isCapture ? "true" : "false");
-  tabGalleryBtn.setAttribute("aria-selected", isCapture ? "false" : "true");
-  viewGalleryBtn.hidden = !isCapture;
-
-  if (!isCapture) {
-    updateThumbnails();
-    galleryEmptyMessage.hidden = photos.length > 0;
+function updateGalleryButton() {
+  if (photos.length === 0) {
+    viewGalleryBtn.textContent = "撮影済み写真はありません";
+    viewGalleryBtn.disabled = true;
+    viewGalleryBtn.classList.add("disabled");
+  } else {
+    viewGalleryBtn.textContent = `撮影済み写真 ${photos.length}枚`;
+    viewGalleryBtn.disabled = false;
+    viewGalleryBtn.classList.remove("disabled");
   }
+}
+
+function openGallery() {
+  updateThumbnails();
+  gallerySummary.textContent = `撮影済み写真 ${photos.length}枚`;
+  galleryEmptyMessage.hidden = photos.length > 0;
+  galleryPanel.hidden = false;
+}
+
+function closeGallery() {
+  galleryPanel.hidden = true;
 }
 
 function applyGuideUrl(url) {
@@ -699,10 +702,14 @@ function closePhotoPreview() {
   previewImage.src = "";
 }
 
-viewGalleryBtn.addEventListener("click", () => setActiveTab("gallery"));
-tabCaptureBtn.addEventListener("click", () => setActiveTab("capture"));
-tabGalleryBtn.addEventListener("click", () => setActiveTab("gallery"));
-backToCaptureBtn.addEventListener("click", () => setActiveTab("capture"));
+viewGalleryBtn.addEventListener("click", () => {
+  if (photos.length === 0) {
+    showActionHint("まだ撮影済みの写真がありません。");
+    return;
+  }
+  openGallery();
+});
+closeGalleryBtn.addEventListener("click", closeGallery);
 closePreviewBtn.addEventListener("click", closePhotoPreview);
 photoPreviewOverlay.addEventListener("click", (event) => {
   if (event.target === photoPreviewOverlay) {
@@ -835,6 +842,6 @@ function dataURLtoBlob(dataURL) {
 }
 
 updatePhotoCount();
-setActiveTab("capture");
+closeGallery();
 loadSessionFromUrl();
 startCamera();

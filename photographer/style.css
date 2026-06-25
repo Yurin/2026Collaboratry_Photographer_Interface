@@ -16,7 +16,7 @@ body {
 
 .app {
   width: 100%;
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   background: #000;
@@ -121,7 +121,7 @@ body {
 
 /* 下の操作パネル */
 .controls {
-  padding: 12px 20px calc(env(safe-area-inset-bottom) + 16px);
+  padding: 12px 20px calc(24px + env(safe-area-inset-bottom));
   background: rgba(20, 20, 20, 0.96);
   border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
@@ -243,23 +243,54 @@ body {
   line-height: 1.45;
 }
 
+.gallery-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0.94);
+  padding-top: env(safe-area-inset-top);
+}
+
+.gallery-content {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+}
+
+.gallery-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.gallery-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.gallery-summary {
+  margin-top: 4px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 14px;
+}
+
 .thumbnail-container {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   width: 100%;
   padding: 16px;
-  background: rgba(12, 12, 12, 0.98);
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
 }
 
 .thumbnail-container[hidden] {
   display: none;
-}
-
-.gallery-header {
-  width: 100%;
-  padding: 14px 16px 8px;
 }
 
 .gallery-title-group {
@@ -288,32 +319,20 @@ body {
   font-size: 15px;
 }
 
-.tab-bar {
-  display: flex;
-  gap: 10px;
-  padding: 10px 12px calc(env(safe-area-inset-bottom) + 10px);
-  background: rgba(10, 10, 10, 0.98);
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-.tab-btn {
-  flex: 1;
-  min-height: 52px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.05);
-  color: white;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.tab-btn.active {
-  background: rgba(37, 99, 235, 0.95);
-  border-color: rgba(37, 99, 235, 0.95);
-}
 
 .secondary-btn {
   background: rgba(255, 255, 255, 0.07);
+}
+
+#viewGalleryBtn {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.action-btn.disabled,
+.action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .photo-preview-overlay {
@@ -367,6 +386,7 @@ body {
 }
 
 .thumbnail img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -404,38 +424,6 @@ body {
     gap: 12px;
     flex-direction: column;
   }
-}
-
-.thumbnail {
-  position: relative;
-  width: 104px;
-  aspect-ratio: 3 / 4;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 12px;
-  background: #222;
-}
-
-.thumbnail img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.thumbnail-delete {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.75);
-  color: #fff;
-  font-size: 21px;
-  line-height: 27px;
 }
 
 #canvas {

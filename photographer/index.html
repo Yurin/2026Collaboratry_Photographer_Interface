@@ -54,40 +54,35 @@
             <button id="deleteSessionBtn" class="action-btn danger-btn">削除</button>
           </div>
 
-          <button id="viewGalleryBtn" class="action-btn secondary-btn">写真一覧を見る</button>
+          <button id="viewGalleryBtn" class="action-btn secondary-btn">撮影済み写真はありません</button>
 
           <div id="errorPanel" class="error-panel" role="alert" hidden></div>
         </section>
       </section>
 
-      <section id="galleryPanel" class="panel gallery-panel" hidden>
+      <section id="galleryPanel" class="panel gallery-panel" hidden aria-modal="true" role="dialog">
         <div class="gallery-header">
-          <div class="gallery-title-group">
-            <button id="backToCaptureBtn" class="action-btn secondary-btn">撮影に戻る</button>
-            <div>
-              <div class="gallery-title">写真一覧</div>
-              <div id="gallerySummary" class="gallery-summary">撮影済み 0 枚</div>
-            </div>
+          <div>
+            <div class="gallery-title">写真一覧</div>
+            <div id="gallerySummary" class="gallery-summary">撮影済み写真 0枚</div>
           </div>
+          <button id="closeGalleryBtn" class="action-btn secondary-btn">閉じる</button>
         </div>
 
-        <div id="galleryEmptyMessage" class="gallery-empty" hidden>
-          まだ撮影された写真はありません。撮影画面で写真を撮ってください。
-        </div>
+        <div class="gallery-content">
+          <div id="galleryEmptyMessage" class="gallery-empty" hidden>
+            まだ撮影済みの写真はありません。撮影画面で写真を撮ってください。
+          </div>
 
-        <section
-          id="thumbnailContainer"
-          class="thumbnail-container"
-          aria-label="撮影した写真一覧"
-          hidden
-        ></section>
+          <section
+            id="thumbnailContainer"
+            class="thumbnail-container"
+            aria-label="撮影した写真一覧"
+            hidden
+          ></section>
+        </div>
       </section>
     </div>
-
-    <nav class="tab-bar" role="tablist" aria-label="画面切り替え">
-      <button id="tabCaptureBtn" class="tab-btn active" type="button" role="tab" aria-selected="true">撮影</button>
-      <button id="tabGalleryBtn" class="tab-btn" type="button" role="tab" aria-selected="false">写真一覧</button>
-    </nav>
 
     <div id="photoPreviewOverlay" class="photo-preview-overlay" hidden>
       <button id="closePreviewBtn" class="preview-close" type="button" aria-label="写真プレビューを閉じる">×</button>
