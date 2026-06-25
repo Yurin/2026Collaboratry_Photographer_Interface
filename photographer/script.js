@@ -586,15 +586,24 @@ function updateGalleryButton() {
   }
 }
 
+function showCaptureView() {
+  galleryPanel.hidden = true;
+  capturePanel.hidden = false;
+  photoPreviewOverlay.hidden = true;
+}
+
 function openGallery() {
   updateThumbnails();
   gallerySummary.textContent = `撮影済み写真 ${photos.length}枚`;
   galleryEmptyMessage.hidden = photos.length > 0;
+  capturePanel.hidden = true;
   galleryPanel.hidden = false;
+  window.scrollTo(0, 0);
 }
 
 function closeGallery() {
   galleryPanel.hidden = true;
+  capturePanel.hidden = false;
 }
 
 function applyGuideUrl(url) {
@@ -709,7 +718,10 @@ viewGalleryBtn.addEventListener("click", () => {
   }
   openGallery();
 });
-closeGalleryBtn.addEventListener("click", closeGallery);
+closeGalleryBtn.addEventListener("click", (event) => {
+  event.preventDefault();
+  closeGallery();
+});
 closePreviewBtn.addEventListener("click", closePhotoPreview);
 photoPreviewOverlay.addEventListener("click", (event) => {
   if (event.target === photoPreviewOverlay) {
@@ -842,6 +854,6 @@ function dataURLtoBlob(dataURL) {
 }
 
 updatePhotoCount();
-closeGallery();
+showCaptureView();
 loadSessionFromUrl();
 startCamera();
