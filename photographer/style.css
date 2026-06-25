@@ -40,28 +40,6 @@ body {
 }
 
 /* カメラ全体エリア */
-.camera-container {
-  position: relative;
-  width: 100%;
-  min-height: 0;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: max(10px, env(safe-area-inset-top)) 8px 8px;
-}
-
-/* 3:4固定のカメラ表示領域 */
-.camera-stage {
-  position: relative;
-  width: min(100%, min(460px, calc(100vw - 16px)));
-  max-height: min(62dvh, 640px);
-  min-height: 260px;
-  aspect-ratio: 3 / 4;
-  background: #111;
-  overflow: hidden;
-  border-radius: 16px;
-}
 
 /* カメラ映像 */
 #video {
@@ -124,9 +102,43 @@ body {
 }
 
 /* 下の操作パネル */
+.capture-panel {
+  position: relative;
+  min-height: 100%;
+}
+
+.camera-container {
+  position: relative;
+  width: 100%;
+  min-height: 0;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(10px, env(safe-area-inset-top)) 8px 8px;
+  padding-bottom: calc(220px + env(safe-area-inset-bottom));
+}
+
+.camera-stage {
+  position: relative;
+  width: min(100%, calc(100vw - 16px));
+  max-width: 460px;
+  max-height: none;
+  min-height: 260px;
+  aspect-ratio: 3 / 4;
+  background: #111;
+  overflow: hidden;
+  border-radius: 16px;
+}
+
 .controls {
-  padding: 12px 20px calc(24px + env(safe-area-inset-bottom));
-  background: rgba(20, 20, 20, 0.96);
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  padding: 16px 20px calc(24px + env(safe-area-inset-bottom));
+  background: rgba(20, 20, 20, 0.94);
   border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 
