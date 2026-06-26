@@ -2,20 +2,36 @@ import UIKit
 
 // MARK: - API Configuration
 struct APIConfig {
+    private static let apiBaseURLKey = AppEnvironment.apiBaseURLKey
+    private static let webAppBaseURLKey = AppEnvironment.webAppBaseURLKey
+    private static let wsBaseURLKey = AppEnvironment.wsBaseURLKey
+    private static let legacyApiBaseURLKey = AppEnvironment.legacyApiBaseURLKey
+    private static let legacyWsBaseURLKey = AppEnvironment.legacyWsBaseURLKey
+
     static var baseURL: URL {
-        let configured = userConfiguredURL(for: "ServerBaseURL")
-            ?? bundledURL(for: "ServerBaseURL")
-            ?? URL(string: "http://localhost:3000")!
+        let configured = userConfiguredURL(for: apiBaseURLKey)
+            ?? bundledURL(for: apiBaseURLKey)
+            ?? userConfiguredURL(for: legacyApiBaseURLKey)
+            ?? bundledURL(for: legacyApiBaseURLKey)
+            ?? AppEnvironment.apiBaseURL
         return normalizedBaseURL(configured)
     }
 
+    static var appBaseURL: URL {
+        let configured = userConfiguredURL(for: webAppBaseURLKey)
+            ?? bundledURL(for: webAppBaseURLKey)
+        return normalizedBaseURL(configured ?? rootURL(from: baseURL))
+    }
+
     static var wsBaseURL: URL {
-        if let configured = userConfiguredURL(for: "WebSocketBaseURL")
-            ?? bundledURL(for: "WebSocketBaseURL") {
-            return configured
+        if let configured = userConfiguredURL(for: wsBaseURLKey)
+            ?? bundledURL(for: wsBaseURLKey)
+            ?? userConfiguredURL(for: legacyWsBaseURLKey)
+            ?? bundledURL(for: legacyWsBaseURLKey) {
+            return normalizedWebSocketURL(configured)
         }
 
-        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+        var components = URLComponents(url: rootURL(from: baseURL), resolvingAgainstBaseURL: false)!
         components.scheme = components.scheme == "https" ? "wss" : "ws"
         components.path = "/ws/video"
         return components.url!
@@ -46,6 +62,36 @@ struct APIConfig {
             return nil
         }
         return url
+    }
+
+    private static func rootURL(from url: URL) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+
+        let pathComponents = components.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        if pathComponents.first == "api" {
+            components.path = "/"
+        } else if components.path.isEmpty {
+            components.path = "/"
+        }
+
+        return components.url ?? url
+    }
+
+    private static func normalizedWebSocketURL(_ url: URL) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+
+        if components.path == "/ws" || components.path == "/ws/" {
+            components.path = "/ws/video"
+        }
+
+        return components.url ?? url
     }
 
     private static func normalizedBaseURL(_ url: URL) -> URL {

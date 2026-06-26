@@ -26,6 +26,8 @@ npm install
 PORT=3000
 HOST=127.0.0.1
 NODE_ENV=production
+# Python interpreter used by guide generation scripts
+# PYTHON=.venv/bin/python
 ```
 
 実際の本番運用では `.env` を作成し、秘密情報は含めないでください。
@@ -45,7 +47,8 @@ pm2 save
 再起動する場合:
 
 ```sh
-pm2 restart photo-backend
+# If you are using a virtual environment, pass the PYTHON path to PM2
+PYTHON=/home/yuri/2026Collaboratry_Photographer_Interface/backend/.venv/bin/python pm2 restart photo-backend
 ```
 
 ## 3. Nginx リバースプロキシ設定例

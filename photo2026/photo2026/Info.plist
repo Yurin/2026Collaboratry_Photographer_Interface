@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>API_BASE_URL</key>
+	<string>https://photo-interface.com</string>
+	<key>WEB_APP_BASE_URL</key>
+	<string>https://photo-interface.com</string>
+	<key>WS_BASE_URL</key>
+	<string>wss://photo-interface.com/ws/video</string>
 	<key>ServerBaseURL</key>
 	<string>http://localhost:3000</string>
 	<key>WebSocketBaseURL</key>

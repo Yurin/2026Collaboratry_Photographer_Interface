@@ -69,7 +69,7 @@ struct TakePhoto: View {
     @State private var wsTask: URLSessionWebSocketTask? = nil
     @State private var shouldReconnectWebSocket: Bool = false
 
-    private let webAppBaseURL = APIConfig.baseURL
+    private let webAppBaseURL = APIConfig.appBaseURL
 
     private var sessionURLString: String {
         var components = URLComponents(url: webAppBaseURL, resolvingAgainstBaseURL: false)
