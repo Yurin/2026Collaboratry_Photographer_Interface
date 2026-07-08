@@ -60,8 +60,14 @@ struct TakePhoto: View {
     @State private var subjectGuideType: GuideType = .silhouette
     @State private var photographerGuideType: GuideType = .rectangle
     @State private var overlayOpacity: Double = 0.45
+    @State private var showGridOverlay: Bool = true
     @State private var sharedGuideHorizontalOffset: Double = 0.0
+    @State private var sharedGuideVerticalOffset: Double = 0.0
     @State private var sharedGuideScale: Double = 1.0
+    @State private var guideDragStartHorizontalOffset: Double = 0.0
+    @State private var guideDragStartVerticalOffset: Double = 0.0
+    @State private var guidePinchStartScale: Double = 1.0
+    @State private var previewScrollRequest: Int = 0
 
     @State private var localSessionID: String = UUID().uuidString
     @State private var connectionState: WebSocketConnectionState = .disconnected
@@ -107,7 +113,7 @@ struct TakePhoto: View {
     }
 
     private var isExperimentMode: Bool {
-        experimentState.hasSession
+        experimentState.isRunning
     }
 
     private var allowsPhotographerSupport: Bool {
@@ -151,171 +157,156 @@ struct TakePhoto: View {
 private extension TakePhoto {
 
     var qrAndPreviewView: some View {
-        VStack(spacing: 16) {
-            Text("PHOTO SESSION")
-                .font(.headline.weight(.black))
-                .tracking(1.2)
-                .padding(.top, 12)
+        ScrollViewReader { scrollProxy in
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(spacing: 16) {
+                    Text("PHOTO SESSION")
+                        .font(.headline.weight(.black))
+                        .tracking(1.2)
+                        .padding(.top, 12)
 
-            if isExperimentMode {
-                Text("実験試行: \(experimentState.trialState)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            HStack(spacing: 12) {
-                Button {
-                    displayMode = .qr
-                } label: {
-                    Text("QR表示")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(displayMode == .qr ? Color.white : AppStyle.surface)
-                        .foregroundColor(displayMode == .qr ? .black : .white)
-                        .clipShape(Capsule())
-                }
-
-                if allowsSubjectSupport {
-                    Button {
-                        displayMode = .preview
-                    } label: {
-                        Text("映像表示")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(displayMode == .preview ? Color.white : AppStyle.surface)
-                            .foregroundColor(displayMode == .preview ? .black : .white)
-                            .clipShape(Capsule())
-                    }
-                }
-            }
-            .padding(.horizontal, 20)
-
-            if allowsPhotographerSupport {
-                if let currentGuide {
-                    Text("表示中ガイド: \(currentGuide.title)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                } else {
-                    Text("ガイドなし")
-                        .font(.subheadline)
+                if isExperimentMode {
+                    Text("実験試行: \(experimentState.trialState)")
+                        .font(.caption)
                         .foregroundColor(.secondary)
                 }
-            }
-
-            if allowsPhotographerSupport && !selectedGuides.isEmpty {
-                guideSelectorView
-                guideTypeControlView
 
                 HStack(spacing: 12) {
                     Button {
-                        Task {
-                            await uploadGuideToSession()
-                        }
+                        displayMode = .qr
                     } label: {
-                        HStack {
-                            if isUploadingGuide {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            }
-                            Text(isUploadingGuide ? "共有中..." : "ガイドを共有")
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(photographerGuideImage == nil || isUploadingGuide ? AppStyle.surface : Color.white)
-                        .foregroundColor(photographerGuideImage == nil || isUploadingGuide ? .secondary : .black)
-                        .clipShape(Capsule())
+                        Text("QR表示")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(displayMode == .qr ? Color.white : AppStyle.surface)
+                            .foregroundColor(displayMode == .qr ? .black : .white)
+                            .clipShape(Capsule())
                     }
-                    .disabled(photographerGuideImage == nil || isUploadingGuide || localSessionID.isEmpty)
+
+                    if allowsSubjectSupport {
+                        Button {
+                            displayMode = .preview
+                        } label: {
+                            Text("映像表示")
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(displayMode == .preview ? Color.white : AppStyle.surface)
+                                .foregroundColor(displayMode == .preview ? .black : .white)
+                                .clipShape(Capsule())
+                        }
+                    }
                 }
                 .padding(.horizontal, 20)
 
-                if let guideShareMessage {
-                    Text(guideShareMessage)
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
+                if allowsPhotographerSupport {
+                    if let currentGuide {
+                        Text("表示中ガイド: \(currentGuide.title)")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("ガイドなし")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                if allowsPhotographerSupport && !selectedGuides.isEmpty {
+                    guideSelectorView
+                    guideTypeControlView
+
+                    HStack(spacing: 12) {
+                        Button {
+                            Task {
+                                await uploadGuideToSession()
+                            }
+                        } label: {
+                            HStack {
+                                if isUploadingGuide {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                }
+                                Text(isUploadingGuide ? "共有中..." : "ガイドを共有")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(photographerGuideImage == nil || isUploadingGuide ? AppStyle.surface : Color.white)
+                            .foregroundColor(photographerGuideImage == nil || isUploadingGuide ? .secondary : .black)
+                            .clipShape(Capsule())
+                        }
+                        .disabled(photographerGuideImage == nil || isUploadingGuide || localSessionID.isEmpty)
+                    }
+                    .padding(.horizontal, 20)
+
+                    if let guideShareMessage {
+                        Text(guideShareMessage)
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 20)
+                    }
+                }
+
+                    Group {
+                        if displayMode == .qr {
+                            qrDisplayView
+                        } else {
+                            remotePreviewView
+                        }
+                    }
+                    .id("capturePreview")
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 20)
+
+                    if allowsPhotographerSupport && !selectedGuides.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("撮影者画面のガイド")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+
+                            Slider(value: $overlayOpacity, in: 0.1...1.0)
+                                .onChange(of: overlayOpacity) { _, _ in
+                                    sendGuideTransform()
+                                }
+
+                            Button {
+                                resetSharedGuideTransform()
+                                sendGuideTransform()
+                            } label: {
+                                Label("位置と大きさをリセット", systemImage: "arrow.counterclockwise")
+                                    .font(.caption.weight(.bold))
+                            }
+                            .padding(8)
+                            .background(AppStyle.elevatedSurface)
+                            .clipShape(Capsule())
+                        }
+                        .appCard()
                         .padding(.horizontal, 20)
-                }
-            }
+                    }
 
-            Group {
-                if displayMode == .qr {
-                    qrDisplayView
-                } else {
-                    remotePreviewView
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, 20)
+                    VStack(spacing: 12) {
+                        Text(connectionState.displayText)
+                            .foregroundColor(connectionState.color)
+                            .bold()
 
-            if allowsPhotographerSupport && !selectedGuides.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("ガイドの透明度")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-
-                    Slider(value: $overlayOpacity, in: 0.1...1.0)
-                        .onChange(of: overlayOpacity) { _, _ in
-                            sendGuideTransform()
+                        Button(role: .destructive) {
+                            endSession()
+                        } label: {
+                            Text("終了")
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(AppStyle.danger)
+                                .foregroundColor(.white)
+                                .clipShape(Capsule())
                         }
-
-                    Text("撮影者画面のガイド調整")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .padding(.top, 6)
-
-                    HStack {
-                        Text("左右")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Slider(value: $sharedGuideHorizontalOffset, in: -0.35...0.35)
-                            .onChange(of: sharedGuideHorizontalOffset) { _, _ in
-                                sendGuideTransform()
-                            }
                     }
-
-                    HStack {
-                        Text("大きさ")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Slider(value: $sharedGuideScale, in: 0.65...1.5)
-                            .onChange(of: sharedGuideScale) { _, _ in
-                                sendGuideTransform()
-                            }
-                    }
-
-                    Button {
-                        resetSharedGuideTransform()
-                        sendGuideTransform()
-                    } label: {
-                        Text("撮影者画面のガイドをリセット")
-                            .font(.caption)
-                    }
-                    .padding(8)
-                    .background(AppStyle.elevatedSurface)
-                    .clipShape(Capsule())
-                }
-                .appCard()
-                .padding(.horizontal, 20)
-            }
-
-            VStack(spacing: 12) {
-                Text(connectionState.displayText)
-                    .foregroundColor(connectionState.color)
-                    .bold()
-
-                Button(role: .destructive) {
-                    endSession()
-                } label: {
-                    Text("終了")
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(AppStyle.danger)
-                        .foregroundColor(.white)
-                        .clipShape(Capsule())
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 90)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 70)
+            .onChange(of: previewScrollRequest) { _, _ in
+                withAnimation(.easeInOut(duration: 0.35)) {
+                    scrollProxy.scrollTo("capturePreview", anchor: .center)
+                }
+            }
         }
     }
 
@@ -444,42 +435,66 @@ private extension TakePhoto {
         VStack(spacing: 16) {
             Spacer()
 
-            ZStack {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color.black.opacity(0.92))
+            GeometryReader { proxy in
+                ZStack {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(Color.black.opacity(0.92))
 
-                if let remoteImage {
-                    ZStack {
-                        Image(uiImage: remoteImage)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .clipped()
-
-                        if allowsSubjectSupport, let guideImage = subjectGuideImage {
-                            Image(uiImage: guideImage)
+                    if let remoteImage {
+                        ZStack {
+                            Image(uiImage: remoteImage)
                                 .resizable()
-                                .scaledToFit()
-                                .scaleEffect(sharedGuideScale)
-                                .offset(x: sharedGuideHorizontalOffset * 320)
-                                .opacity(overlayOpacity)
-                                .padding()
-                        }
-                    }
-                } else {
-                    VStack(spacing: 12) {
-                        Image(systemName: isWebSocketConnected ? "video.fill" : "antenna.radiowaves.left.and.right")
-                            .font(.system(size: 40))
-                            .foregroundColor(.white)
+                                .scaledToFill()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .clipped()
 
-                        Text(isWebSocketConnected ? "ライブ映像を待機中" : connectionState.displayText)
-                            .foregroundColor(.white)
+                            if allowsSubjectSupport, let guideImage = subjectGuideImage {
+                                Image(uiImage: guideImage)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .scaleEffect(sharedGuideScale)
+                                    .offset(
+                                        x: sharedGuideHorizontalOffset * proxy.size.width,
+                                        y: sharedGuideVerticalOffset * proxy.size.height
+                                    )
+                                    .opacity(overlayOpacity)
+                                    .padding()
+                                    .contentShape(Rectangle())
+                                    .gesture(
+                                        guideDragGesture(in: proxy.size)
+                                            .simultaneously(with: guidePinchGesture)
+                                    )
+                            }
 
-                        if let currentGuide {
-                            Text("ガイド: \(currentGuide.title)")
-                                .font(.footnote)
-                                .foregroundColor(.white.opacity(0.8))
+                            if showGridOverlay {
+                                CameraGridOverlay()
+                                    .allowsHitTesting(false)
+                            }
+
+                            gridToggleButton
                         }
+                    } else {
+                        VStack(spacing: 12) {
+                            Image(systemName: isWebSocketConnected ? "video.fill" : "antenna.radiowaves.left.and.right")
+                                .font(.system(size: 40))
+                                .foregroundColor(.white)
+
+                            Text(isWebSocketConnected ? "ライブ映像を待機中" : connectionState.displayText)
+                                .foregroundColor(.white)
+
+                            if let currentGuide {
+                                Text("ガイド: \(currentGuide.title)")
+                                    .font(.footnote)
+                                    .foregroundColor(.white.opacity(0.8))
+                            }
+                        }
+
+                        if showGridOverlay {
+                            CameraGridOverlay()
+                                .allowsHitTesting(false)
+                        }
+
+                        gridToggleButton
                     }
                 }
             }
@@ -502,6 +517,32 @@ private extension TakePhoto {
 
             Spacer()
         }
+    }
+
+    var gridToggleButton: some View {
+        VStack {
+            HStack {
+                Spacer()
+
+                Button {
+                    showGridOverlay.toggle()
+                } label: {
+                    Image(systemName: showGridOverlay ? "square.grid.3x3.fill" : "square.grid.3x3")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(Color.black.opacity(0.48))
+                        .clipShape(Circle())
+                        .overlay {
+                            Circle().stroke(Color.white.opacity(0.18), lineWidth: 1)
+                        }
+                }
+                .accessibilityLabel(showGridOverlay ? "グリッド線を消す" : "グリッド線を出す")
+            }
+
+            Spacer()
+        }
+        .padding(10)
     }
 
     var receivingPhotoView: some View {
@@ -578,7 +619,7 @@ private extension TakePhoto {
             currentGuideIndex = 0
         }
 
-        if experimentState.hasSession {
+        if isExperimentMode {
             localSessionID = experimentState.sessionId
         } else {
             localSessionID = UUID().uuidString
@@ -590,6 +631,7 @@ private extension TakePhoto {
         receivedImages = []
         saveErrorMessage = nil
         phase = .qrAndPreview
+        showGridOverlay = true
         shouldReconnectWebSocket = true
 
         connectWebSocket()
@@ -740,7 +782,9 @@ private extension TakePhoto {
             if let url = url {
                 guideShareMessage = "ガイドを共有しました。"
                 print("Guide URL: \(url)")
+                displayMode = .preview
                 sendGuideTransform()
+                previewScrollRequest += 1
                 logSubjectEvent("guide_shared", payload: [
                     "guideType": photographerGuideType.rawValue,
                 ])
@@ -779,7 +823,7 @@ private extension TakePhoto {
         phase = .qrAndPreview
         displayMode = .qr
         currentGuideIndex = 0
-        localSessionID = experimentState.hasSession
+        localSessionID = isExperimentMode
             ? experimentState.sessionId
             : UUID().uuidString
         sessionId = localSessionID
@@ -788,14 +832,59 @@ private extension TakePhoto {
         saveErrorMessage = nil
         isSavingPhotos = false
         overlayOpacity = 0.45
+        showGridOverlay = true
         resetSharedGuideTransform()
         shouldReconnectWebSocket = false
     }
 
     func resetSharedGuideTransform() {
         sharedGuideHorizontalOffset = 0.0
+        sharedGuideVerticalOffset = 0.0
         sharedGuideScale = 1.0
         overlayOpacity = 0.45
+        guideDragStartHorizontalOffset = 0.0
+        guideDragStartVerticalOffset = 0.0
+        guidePinchStartScale = 1.0
+    }
+
+    func constrainedGuideOffset(_ value: Double) -> Double {
+        min(0.5, max(-0.5, value))
+    }
+
+    func constrainedGuideScale(_ value: Double) -> Double {
+        min(1.8, max(0.5, value))
+    }
+
+    func guideDragGesture(in size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard size.width > 0, size.height > 0 else { return }
+
+                sharedGuideHorizontalOffset = constrainedGuideOffset(
+                    guideDragStartHorizontalOffset + Double(value.translation.width / size.width)
+                )
+                sharedGuideVerticalOffset = constrainedGuideOffset(
+                    guideDragStartVerticalOffset + Double(value.translation.height / size.height)
+                )
+                sendGuideTransform()
+            }
+            .onEnded { _ in
+                guideDragStartHorizontalOffset = sharedGuideHorizontalOffset
+                guideDragStartVerticalOffset = sharedGuideVerticalOffset
+                sendGuideTransform()
+            }
+    }
+
+    var guidePinchGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                sharedGuideScale = constrainedGuideScale(guidePinchStartScale * Double(value))
+                sendGuideTransform()
+            }
+            .onEnded { _ in
+                guidePinchStartScale = sharedGuideScale
+                sendGuideTransform()
+            }
     }
 
     func sendGuideTransform() {
@@ -806,6 +895,7 @@ private extension TakePhoto {
         let payload: [String: Any] = [
             "type": "guide-transform",
             "offsetX": sharedGuideHorizontalOffset,
+            "offsetY": sharedGuideVerticalOffset,
             "scale": sharedGuideScale,
             "opacity": overlayOpacity
         ]
@@ -822,13 +912,14 @@ private extension TakePhoto {
         }
         logSubjectEvent("guide_transform_changed", payload: [
             "offsetX": sharedGuideHorizontalOffset,
+            "offsetY": sharedGuideVerticalOffset,
             "scale": sharedGuideScale,
             "opacity": overlayOpacity,
         ])
     }
 
     func logSubjectEvent(_ eventType: String, payload: [String: Any] = [:]) {
-        guard experimentState.hasTrial else { return }
+        guard experimentState.isRunning else { return }
         Task {
             await ExperimentAPI.shared.logEvent(
                 sessionId: experimentState.sessionId,
@@ -886,6 +977,28 @@ struct QRCodeView: View {
         }
 
         return UIImage(cgImage: cgImage)
+    }
+}
+
+struct CameraGridOverlay: View {
+    var body: some View {
+        GeometryReader { proxy in
+            Path { path in
+                let width = proxy.size.width
+                let height = proxy.size.height
+
+                for ratio in [1.0 / 3.0, 2.0 / 3.0] {
+                    let x = width * ratio
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: height))
+
+                    let y = height * ratio
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: width, y: y))
+                }
+            }
+            .stroke(Color.white.opacity(0.42), lineWidth: 0.75)
+        }
     }
 }
 
