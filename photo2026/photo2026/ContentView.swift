@@ -14,7 +14,8 @@ struct ContentView: View {
             TabView(selection: $selectedIndex) {
                 HomeView(
                     selectedIndex: $selectedIndex,
-                    resetID: $takePhotoResetID
+                    resetID: $takePhotoResetID,
+                    pendingSelectedGuides: $pendingSelectedGuides
                 )
                 .tag(TabbarItem.home.rawValue)
 
@@ -30,6 +31,13 @@ struct ContentView: View {
 
                 MakeGuide(sessionId: $sessionId)
                     .tag(TabbarItem.guide.rawValue)
+
+                SceneTemplateView(
+                    selectedIndex: $selectedIndex,
+                    resetID: $takePhotoResetID,
+                    pendingSelectedGuides: $pendingSelectedGuides
+                )
+                .tag(TabbarItem.template.rawValue)
 
                 ShowGuide(
                     selectedIndex: $selectedIndex,
@@ -97,9 +105,14 @@ enum TabbarItem: Int, CaseIterable {
     case home
     case photo
     case guide
+    case template
     case showGuide
     case receivedPhotos
     case experiment
+
+    static var allCases: [TabbarItem] {
+        [.home, .photo, .guide, .showGuide, .receivedPhotos, .experiment]
+    }
 
     var title: String {
         switch self {
@@ -109,6 +122,8 @@ enum TabbarItem: Int, CaseIterable {
             return "写真"
         case .guide:
             return "ガイド作成"
+        case .template:
+            return "テンプレ"
         case .showGuide:
             return "ライブラリ"
         case .receivedPhotos:
@@ -126,6 +141,8 @@ enum TabbarItem: Int, CaseIterable {
             return "camera.fill"
         case .guide:
             return "wand.and.stars"
+        case .template:
+            return "person.crop.rectangle"
         case .showGuide:
             return "square.grid.2x2.fill"
         case .receivedPhotos:

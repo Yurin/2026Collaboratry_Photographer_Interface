@@ -70,7 +70,7 @@ struct ShowGuide: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("再読み込み") {
-                        store.load()
+                        reloadGuides()
                     }
                 }
 
@@ -91,7 +91,10 @@ struct ShowGuide: View {
                 }
             }
             .onAppear {
-                store.load()
+                reloadGuides()
+            }
+            .onChange(of: selectedGuideIDs) { _, _ in
+                syncSelectedGuides()
             }
         }
     }
@@ -199,6 +202,19 @@ struct ShowGuide: View {
         } else {
             selectedGuideIDs.insert(id)
         }
+    }
+
+    private func reloadGuides() {
+        store.load()
+
+        let availableGuideIDs = Set(store.guides.map(\.id))
+        let pendingGuideIDs = Set(pendingSelectedGuides.map(\.id))
+        selectedGuideIDs = pendingGuideIDs.intersection(availableGuideIDs)
+        syncSelectedGuides()
+    }
+
+    private func syncSelectedGuides() {
+        pendingSelectedGuides = selectedGuides
     }
 
     private func deleteGuide(_ guide: GuideItem) {

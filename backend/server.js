@@ -546,6 +546,7 @@ wss.on("connection", (ws, req) => {
             sessionId,
             transform: {
               offsetX: Number(payload.offsetX) || 0,
+              offsetY: Number(payload.offsetY) || 0,
               scale: Number(payload.scale) || 1,
               opacity: Number(payload.opacity) || 0.5,
             },

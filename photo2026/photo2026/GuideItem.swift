@@ -81,16 +81,18 @@ final class GuideLibraryStore: ObservableObject {
         }
     }
 
-    func addGuide(title: String, referenceImage: UIImage, guideImage: UIImage) {
+    @discardableResult
+    func addGuide(title: String, referenceImage: UIImage, guideImage: UIImage) -> GuideItem? {
         addGuide(title: title, referenceImage: referenceImage, guideImages: [.silhouette: guideImage])
     }
 
-    func addGuide(title: String, referenceImage: UIImage, guideImages: [GuideType: UIImage]) {
+    @discardableResult
+    func addGuide(title: String, referenceImage: UIImage, guideImages: [GuideType: UIImage]) -> GuideItem? {
         let id = UUID()
 
         guard let referenceImagePath = saveImage(referenceImage, fileName: "reference_\(id.uuidString).jpg") else {
             print("画像保存失敗")
-            return
+            return nil
         }
 
         let rectanglePath = saveGuideImage(guideImages[.rectangle], type: .rectangle, id: id)
@@ -102,7 +104,7 @@ final class GuideLibraryStore: ObservableObject {
             let refURL = documentsDirectory.appendingPathComponent(referenceImagePath)
             try? FileManager.default.removeItem(at: refURL)
             print("ガイド画像保存失敗")
-            return
+            return nil
         }
 
         let newGuide = GuideItem(
@@ -118,6 +120,7 @@ final class GuideLibraryStore: ObservableObject {
 
         guides.insert(newGuide, at: 0)
         save()
+        return newGuide
     }
 
     func deleteGuide(_ guide: GuideItem) {
