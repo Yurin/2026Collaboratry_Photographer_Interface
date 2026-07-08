@@ -1,6 +1,8 @@
 const video = document.getElementById("video");
 const guide = document.getElementById("guide");
+const gridOverlay = document.getElementById("gridOverlay");
 const opacitySlider = document.getElementById("opacitySlider");
+const toggleGridBtn = document.getElementById("toggleGridBtn");
 const toggleGuideBtn = document.getElementById("toggleGuideBtn");
 const captureBtn = document.getElementById("captureBtn");
 const canvas = document.getElementById("canvas");
@@ -31,6 +33,7 @@ const API_BASE_PATH = "/api";
 let selectedPhotoIndex = null;
 
 let showGuide = true;
+let showGrid = true;
 let currentStream = null;
 let photos = [];
 let sessionId = "";
@@ -43,6 +46,7 @@ let reconnectTimer = null;
 let sessionSocketClosedByUser = false;
 let guideTransform = {
   offsetX: 0,
+  offsetY: 0,
   scale: 1,
   opacity: 0.5,
 };
@@ -314,6 +318,7 @@ function connectSessionSocket(isReconnect = false) {
         guide.hidden = true;
         guideTransform = {
           offsetX: 0,
+          offsetY: 0,
           scale: 1,
           opacity: 0.5,
         };
@@ -504,6 +509,16 @@ toggleGuideBtn.addEventListener("click", () => {
   logExperimentEvent("guide_visibility_changed", { visible: showGuide });
 });
 
+toggleGridBtn.addEventListener("click", () => {
+  showGrid = !showGrid;
+  gridOverlay.hidden = !showGrid;
+  toggleGridBtn.textContent = showGrid ? "▦" : "□";
+  const label = showGrid ? "グリッド線を消す" : "グリッド線を出す";
+  toggleGridBtn.setAttribute("aria-label", label);
+  toggleGridBtn.title = label;
+  logExperimentEvent("grid_visibility_changed", { visible: showGrid });
+});
+
 shareLiveBtn.addEventListener("click", () => {
   if (shareActive) {
     stopLiveShare();
@@ -619,18 +634,20 @@ function applyGuideUrl(url) {
 
 function applyGuideTransform(transform) {
   const offsetX = Number(transform.offsetX ?? 0);
+  const offsetY = Number(transform.offsetY ?? 0);
   const scale = Number(transform.scale ?? 1);
   const opacity = Number(transform.opacity ?? guideTransform.opacity);
 
   guideTransform = {
     offsetX: Math.max(-0.5, Math.min(0.5, offsetX)),
+    offsetY: Math.max(-0.5, Math.min(0.5, offsetY)),
     scale: Math.max(0.5, Math.min(1.8, scale)),
     opacity: Math.max(0, Math.min(1, opacity)),
   };
 
   opacitySlider.value = guideTransform.opacity;
   guide.style.opacity = String(guideTransform.opacity);
-  guide.style.transform = `translateX(${guideTransform.offsetX * 100}%) scale(${guideTransform.scale})`;
+  guide.style.transform = `translate(${guideTransform.offsetX * 100}%, ${guideTransform.offsetY * 100}%) scale(${guideTransform.scale})`;
 }
 
 async function updateSessionGuide() {
@@ -765,6 +782,7 @@ deleteSessionBtn.addEventListener("click", async () => {
     guide.hidden = true;
     guideTransform = {
       offsetX: 0,
+      offsetY: 0,
       scale: 1,
       opacity: 0.5,
     };

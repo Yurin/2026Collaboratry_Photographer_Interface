@@ -17,6 +17,7 @@
           <div class="camera-stage">
             <video id="video" autoplay playsinline muted></video>
             <img id="guide" alt="撮影ガイド" hidden />
+            <div id="gridOverlay" class="grid-overlay" aria-hidden="true"></div>
             <div class="button-area camera-overlay">
               <button id="captureBtn" class="capture-btn" aria-label="撮影"></button>
               <span id="photoCount" class="photo-count">0枚</span>
@@ -25,7 +26,10 @@
 
           <div class="top-bar">
             <div class="status">接続準備中</div>
-            <button id="toggleGuideBtn" class="action-btn guide-control" hidden>ガイドON/OFF</button>
+            <div class="top-actions">
+              <button id="toggleGridBtn" class="action-btn icon-toggle-btn" aria-label="グリッド線を消す" title="グリッド線を消す">▦</button>
+              <button id="toggleGuideBtn" class="action-btn guide-control" hidden>ガイドON/OFF</button>
+            </div>
           </div>
         </section>
 
