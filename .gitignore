@@ -22,6 +22,8 @@ backend/*.pt
 
 # Xcode user/build files
 photo2026/photo2026.xcodeproj/xcuserdata/
+photo2026/photo2026.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
 photo2026/DerivedData/
 DerivedData/
 
