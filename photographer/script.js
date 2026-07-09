@@ -20,6 +20,9 @@ const galleryEmptyMessage = document.getElementById("galleryEmptyMessage");
 const photoPreviewOverlay = document.getElementById("photoPreviewOverlay");
 const previewImage = document.getElementById("previewImage");
 const closePreviewBtn = document.getElementById("closePreviewBtn");
+const postSendDialog = document.getElementById("postSendDialog");
+const continueCaptureBtn = document.getElementById("continueCaptureBtn");
+const finishCaptureBtn = document.getElementById("finishCaptureBtn");
 const capturePanel = document.getElementById("capturePanel");
 const galleryPanel = document.getElementById("galleryPanel");
 const errorPanel = document.getElementById("errorPanel");
@@ -508,6 +511,38 @@ function stopLiveShare(shouldCloseSocket = true) {
   }
 }
 
+function resetCapturedPhotos() {
+  photos = [];
+  updateThumbnails();
+  updatePhotoCount();
+}
+
+function finishCaptureAfterSend() {
+  stopLiveShare();
+  shareLiveBtn.textContent = "ライブ共有";
+  setConnectionState(wsSession?.readyState === WebSocket.OPEN ? "connected" : "disconnected");
+  showSupportMessage("撮影を終了しました。", { autoHideMs: 3000 });
+}
+
+function askPostSendAction() {
+  return new Promise((resolve) => {
+    postSendDialog.hidden = false;
+
+    const cleanup = (action) => {
+      postSendDialog.hidden = true;
+      continueCaptureBtn.removeEventListener("click", continueHandler);
+      finishCaptureBtn.removeEventListener("click", finishHandler);
+      resolve(action);
+    };
+
+    const continueHandler = () => cleanup("continue");
+    const finishHandler = () => cleanup("finish");
+
+    continueCaptureBtn.addEventListener("click", continueHandler);
+    finishCaptureBtn.addEventListener("click", finishHandler);
+  });
+}
+
 async function startCamera() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -784,9 +819,7 @@ clearBtn.addEventListener("click", () => {
     return;
   }
   if (confirm("すべての写真を削除しますか？")) {
-    photos = [];
-    updateThumbnails();
-    updatePhotoCount();
+    resetCapturedPhotos();
     logExperimentEvent("photos_cleared");
   }
 });
@@ -806,7 +839,7 @@ deleteSessionBtn.addEventListener("click", async () => {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    photos = [];
+    resetCapturedPhotos();
     guideUrlOverride = null;
     guide.removeAttribute("src");
     guide.hidden = true;
@@ -817,8 +850,6 @@ deleteSessionBtn.addEventListener("click", async () => {
       opacity: 0.5,
     };
     applyGuideTransform(guideTransform);
-    updateThumbnails();
-    updatePhotoCount();
     showError("このセッションの保存データを削除しました。");
   } catch (error) {
     console.error(error);
@@ -868,10 +899,14 @@ sendBtn.addEventListener("click", async () => {
       photoCount: result.files?.length || photos.length,
       photoIds: result.files?.map((file) => file.filename) || [],
     });
-    alert("写真を送信しました！");
-    photos = [];
-    updateThumbnails();
-    updatePhotoCount();
+    const nextAction = await askPostSendAction();
+    resetCapturedPhotos();
+
+    if (nextAction === "finish") {
+      finishCaptureAfterSend();
+    } else {
+      showSupportMessage("送信済み写真をリセットしました。続けて撮影できます。", { autoHideMs: 3000 });
+    }
   } catch (error) {
     console.error(error);
     showError("写真の送信に失敗しました。サーバー接続とセッションIDを確認してください。");

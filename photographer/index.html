@@ -95,6 +95,17 @@
       <img id="previewImage" alt="写真プレビュー" />
     </div>
 
+    <div id="postSendDialog" class="post-send-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="postSendTitle">
+      <div class="post-send-card">
+        <div id="postSendTitle" class="post-send-title">写真を送信しました</div>
+        <p class="post-send-message">このまま撮影を続けますか？</p>
+        <div class="post-send-actions">
+          <button id="continueCaptureBtn" type="button" class="action-btn send-btn">続ける</button>
+          <button id="finishCaptureBtn" type="button" class="action-btn secondary-btn">終了する</button>
+        </div>
+      </div>
+    </div>
+
     <canvas id="canvas"></canvas>
   </main>
 

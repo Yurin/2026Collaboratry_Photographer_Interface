@@ -443,6 +443,50 @@ input {
   box-shadow: 0 0 45px rgba(0, 0, 0, 0.55);
 }
 
+.post-send-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(10px);
+}
+
+.post-send-dialog[hidden] {
+  display: none;
+}
+
+.post-send-card {
+  width: min(100%, 360px);
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 16px;
+  background: rgba(24, 24, 27, 0.96);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+}
+
+.post-send-title {
+  margin-bottom: 6px;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.post-send-message {
+  margin: 0 0 18px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.post-send-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 .thumbnail {
   position: relative;
   width: 100%;
