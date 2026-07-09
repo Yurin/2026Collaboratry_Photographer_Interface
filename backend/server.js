@@ -147,6 +147,26 @@ function getReferencePosePath(sessionId, referenceImageId) {
   return path.join(getReferencePoseDir(sessionId, referenceImageId), "current.json");
 }
 
+function getGuideFeaturesDir(sessionId) {
+  return path.join(getDataDir(sessionId, "guides"), "features");
+}
+
+function getGuideFeaturesPath(sessionId, guideId) {
+  return path.join(getGuideFeaturesDir(sessionId), `${safeIdentifier(guideId)}.json`);
+}
+
+function getAnalysisDir(sessionId) {
+  return path.join(getSessionDir(sessionId), "analysis");
+}
+
+function getObservationPath(sessionId, photoId) {
+  return path.join(getAnalysisDir(sessionId), "observations", `${safeIdentifier(photoId)}.json`);
+}
+
+function getRoleGuidancePath(sessionId, photoId) {
+  return path.join(getAnalysisDir(sessionId), "role_guidance", `${safeIdentifier(photoId)}.json`);
+}
+
 function safeIdentifier(value, fallback = "") {
   return String(value || fallback)
     .trim()
@@ -337,6 +357,81 @@ function runReferencePoseExtractor(inputPath, outputPath, imageOutputPath, maskO
   );
 }
 
+function runReferenceFeaturesExtractor(inputPath, outputPath, guideId, referencePhotoId, cropParams = null) {
+  const scriptPath = path.join(
+    __dirname,
+    "guide_processor",
+    "extract_reference_features.py"
+  );
+  const pythonCommand = process.env.PYTHON || "python3";
+  const args = [
+    scriptPath,
+    "--input",
+    inputPath,
+    "--output",
+    outputPath,
+    "--guide-id",
+    guideId,
+    "--reference-photo-id",
+    referencePhotoId,
+  ];
+  if (cropParams) {
+    args.push("--crop-x", String(cropParams.cropX));
+    args.push("--crop-y", String(cropParams.cropY));
+    args.push("--crop-width", String(cropParams.cropWidth));
+    args.push("--crop-height", String(cropParams.cropHeight));
+  }
+  execFileSync(pythonCommand, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+function runLiveFeaturesExtractor(inputPath, outputPath, sessionId, trialId = "", source = "capturedPhoto") {
+  const scriptPath = path.join(
+    __dirname,
+    "guide_processor",
+    "extract_live_features.py"
+  );
+  const pythonCommand = process.env.PYTHON || "python3";
+  const args = [
+    scriptPath,
+    "--input",
+    inputPath,
+    "--output",
+    outputPath,
+    "--session-id",
+    sessionId,
+    "--source",
+    source,
+  ];
+  if (trialId) {
+    args.push("--trial-id", trialId);
+  }
+  execFileSync(pythonCommand, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+function runRoleGuidance(referencePath, observationPath, outputPath, guideTransform = {}) {
+  const scriptPath = path.join(__dirname, "guide_processor", "role_guidance.py");
+  const pythonCommand = process.env.PYTHON || "python3";
+  execFileSync(
+    pythonCommand,
+    [
+      scriptPath,
+      "--reference",
+      referencePath,
+      "--observation",
+      observationPath,
+      "--output",
+      outputPath,
+      "--guide-transform",
+      JSON.stringify(guideTransform || {}),
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] }
+  );
+}
+
 function validateReferencePose(body) {
   if (!body || !Array.isArray(body.keypoints) || body.keypoints.length === 0) {
     const error = new Error("keypoints are required");
@@ -381,6 +476,49 @@ function parseCropParams(body) {
     cropParams.cropHeight !== undefined;
 
   return hasCropParams ? cropParams : null;
+}
+
+function parseGuideTransform(value) {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  if (typeof value !== "object") return {};
+  return value;
+}
+
+function findPhotoPath(sessionId, photoId) {
+  const safePhotoId = safeIdentifier(photoId);
+  const candidates = [
+    path.join(getDataDir(sessionId, "photos"), safePhotoId),
+    path.join(getSessionDir(sessionId), safePhotoId),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function latestGuideFeaturesPath(sessionId) {
+  const featureFiles = listFiles(getGuideFeaturesDir(sessionId))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  if (featureFiles.length === 0) return null;
+  return path.join(getGuideFeaturesDir(sessionId), featureFiles[0].filename);
+}
+
+function findGuideFeaturesPath(sessionId, guideId) {
+  if (guideId) {
+    const exactPath = getGuideFeaturesPath(sessionId, guideId);
+    if (fs.existsSync(exactPath)) return exactPath;
+  }
+  return latestGuideFeaturesPath(sessionId);
+}
+
+function publicFeatureFile(sessionId, guideId) {
+  const filePath = getGuideFeaturesPath(sessionId, guideId);
+  if (!fs.existsSync(filePath)) return null;
+  return readJsonFile(filePath);
 }
 
 app.use(cors());
@@ -1254,9 +1392,11 @@ app.post("/api/session/:sessionId/generate-guide", upload.single("reference"), (
   const allowedTypes = new Set(["rectangle", "keypoints", "silhouette"]);
   const safeGuideType = allowedTypes.has(guideType) ? guideType : "rectangle";
   const outputFilename = `guide_${safeGuideType}_${Date.now()}.png`;
+  const guideId = path.parse(outputFilename).name;
   const guideDir = getDataDir(sessionId, "guides");
   fs.mkdirSync(guideDir, { recursive: true });
   const outputPath = path.join(guideDir, outputFilename);
+  const featuresPath = getGuideFeaturesPath(sessionId, guideId);
 
   try {
     if (cropParams) {
@@ -1264,6 +1404,13 @@ app.post("/api/session/:sessionId/generate-guide", upload.single("reference"), (
     } else {
       runPythonGuideGenerator(req.file.path, outputPath, safeGuideType);
     }
+    runReferenceFeaturesExtractor(
+      req.file.path,
+      featuresPath,
+      guideId,
+      req.file.filename,
+      cropParams
+    );
   } catch (error) {
     console.error("guide generation failed:", error);
     return res.status(500).json({
@@ -1278,8 +1425,10 @@ app.post("/api/session/:sessionId/generate-guide", upload.single("reference"), (
     success: true,
     sessionId,
     guide: {
+      guideId,
       filename: outputFilename,
       url,
+      featuresUrl: `/api/guides/${encodeURIComponent(guideId)}/features?sessionId=${encodeURIComponent(sessionId)}`,
     },
   };
 
@@ -1304,9 +1453,11 @@ app.post("/api/session/:sessionId/generate-guide-set", upload.single("reference"
   const cropParams = parseCropParams(req.body);
   const guideTypes = ["rectangle", "keypoints", "silhouette"];
   const batchId = Date.now();
+  const guideId = `guide_set_${batchId}`;
   const guides = {};
   const guideDir = getDataDir(sessionId, "guides");
   fs.mkdirSync(guideDir, { recursive: true });
+  const featuresPath = getGuideFeaturesPath(sessionId, guideId);
 
   try {
     for (const guideType of guideTypes) {
@@ -1320,10 +1471,19 @@ app.post("/api/session/:sessionId/generate-guide-set", upload.single("reference"
       }
 
       guides[guideType] = {
+        guideId,
         filename: outputFilename,
         url: makeFileUrl(sessionId, outputFilename, "guides"),
+        featuresUrl: `/api/guides/${encodeURIComponent(guideId)}/features?sessionId=${encodeURIComponent(sessionId)}`,
       };
     }
+    runReferenceFeaturesExtractor(
+      req.file.path,
+      featuresPath,
+      guideId,
+      req.file.filename,
+      cropParams
+    );
   } catch (error) {
     console.error("guide set generation failed:", error);
     return res.status(500).json({
@@ -1335,6 +1495,10 @@ app.post("/api/session/:sessionId/generate-guide-set", upload.single("reference"
   res.json({
     success: true,
     sessionId,
+    referenceGuide: {
+      guideId,
+      featuresUrl: `/api/guides/${encodeURIComponent(guideId)}/features?sessionId=${encodeURIComponent(sessionId)}`,
+    },
     guides,
   });
 });
@@ -1411,6 +1575,203 @@ app.get("/api/photos", (req, res) => {
     success: true,
     files,
   });
+});
+
+app.get("/api/guides/:guideId/features", (req, res) => {
+  const guideId = safeIdentifier(req.params.guideId);
+  const sessionId = safeSessionId(req.query.sessionId, "");
+
+  if (!guideId) {
+    return res.status(400).json({
+      success: false,
+      error: "guideId is required",
+    });
+  }
+  if (!sessionId) {
+    return res.status(400).json({
+      success: false,
+      error: "sessionId is required",
+    });
+  }
+
+  const referenceGuide = publicFeatureFile(sessionId, guideId);
+  if (!referenceGuide) {
+    return res.status(404).json({
+      success: false,
+      error: "guide features not found",
+    });
+  }
+
+  res.json({
+    success: true,
+    sessionId,
+    guideId,
+    referenceGuide,
+  });
+});
+
+app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) => {
+  try {
+    const sessionId = safeSessionId(req.params.sessionId, "");
+    const photoId = safeIdentifier(req.params.photoId);
+    const guideId = safeIdentifier(req.body.guideId);
+    const trialId = safeIdentifier(req.body.trialId);
+    const guideTransform = parseGuideTransform(req.body.guideTransform);
+
+    if (!sessionId || !photoId) {
+      return res.status(400).json({
+        success: false,
+        error: "sessionId and photoId are required",
+      });
+    }
+
+    const photoPath = findPhotoPath(sessionId, photoId);
+    if (!photoPath) {
+      return res.status(404).json({
+        success: false,
+        error: "photo not found",
+      });
+    }
+
+    const referencePath = findGuideFeaturesPath(sessionId, guideId);
+    if (!referencePath) {
+      return res.status(404).json({
+        success: false,
+        error: "reference guide features not found",
+      });
+    }
+
+    const observationPath = getObservationPath(sessionId, photoId);
+    const guidancePath = getRoleGuidancePath(sessionId, photoId);
+    runLiveFeaturesExtractor(photoPath, observationPath, sessionId, trialId, "capturedPhoto");
+    runRoleGuidance(referencePath, observationPath, guidancePath, guideTransform);
+
+    const referenceGuide = readJsonFile(referencePath);
+    const liveObservation = readJsonFile(observationPath);
+    const roleGuidance = readJsonFile(guidancePath);
+    const payload = {
+      success: true,
+      sessionId,
+      trialId: trialId || null,
+      guideId: referenceGuide?.guideId || guideId || null,
+      photoId,
+      referenceGuide,
+      liveObservation,
+      ...roleGuidance,
+    };
+
+    if (trialId) {
+      try {
+        appendTrialEvents(sessionId, trialId, [{
+          role: "system",
+          eventType: "role_guidance_analyzed",
+          payload: {
+            guideId: payload.guideId,
+            photoId,
+            guideTransform,
+            alignmentError: roleGuidance.alignmentError,
+            roleDecomposition: {
+              photographerGuidance: roleGuidance.photographerGuidance,
+              subjectGuidance: roleGuidance.subjectGuidance,
+            },
+            ready: roleGuidance.ready,
+          },
+        }]);
+      } catch (error) {
+        console.error("role guidance event logging failed:", error);
+      }
+    }
+
+    notifySession(sessionId, {
+      type: "alignmentResult",
+      sessionId,
+      trialId: trialId || null,
+      photoId,
+      alignmentError: roleGuidance.alignmentError,
+    });
+    notifySession(sessionId, {
+      type: "roleGuidanceUpdated",
+      sessionId,
+      trialId: trialId || null,
+      photoId,
+      photographerGuidance: roleGuidance.photographerGuidance,
+      subjectGuidance: roleGuidance.subjectGuidance,
+    });
+    notifySession(sessionId, {
+      type: "readyStateUpdated",
+      sessionId,
+      trialId: trialId || null,
+      photoId,
+      ready: roleGuidance.ready,
+    });
+
+    res.json(payload);
+  } catch (error) {
+    console.error("photo analysis failed:", error);
+    next(error);
+  }
+});
+
+app.post("/api/sessions/:sessionId/analyze-frame", upload.single("frame"), (req, res, next) => {
+  try {
+    const sessionId = safeSessionId(req.params.sessionId, "");
+    const trialId = safeIdentifier(req.body.trialId);
+    const guideId = safeIdentifier(req.body.guideId);
+    const guideTransform = parseGuideTransform(req.body.guideTransform);
+
+    if (!sessionId || !req.file) {
+      return res.status(400).json({
+        success: false,
+        error: "sessionId and frame are required",
+      });
+    }
+
+    const referencePath = findGuideFeaturesPath(sessionId, guideId);
+    if (!referencePath) {
+      return res.status(404).json({
+        success: false,
+        error: "reference guide features not found",
+      });
+    }
+
+    const frameId = path.parse(req.file.filename).name;
+    const observationPath = getObservationPath(sessionId, frameId);
+    const guidancePath = getRoleGuidancePath(sessionId, frameId);
+    runLiveFeaturesExtractor(req.file.path, observationPath, sessionId, trialId, "liveFrame");
+    runRoleGuidance(referencePath, observationPath, guidancePath, guideTransform);
+
+    const roleGuidance = readJsonFile(guidancePath);
+    const payload = {
+      success: true,
+      sessionId,
+      trialId: trialId || null,
+      guideId: guideId || readJsonFile(referencePath)?.guideId || null,
+      frameId,
+      liveObservation: readJsonFile(observationPath),
+      ...roleGuidance,
+    };
+
+    notifySession(sessionId, {
+      type: "roleGuidanceUpdated",
+      sessionId,
+      trialId: trialId || null,
+      frameId,
+      photographerGuidance: roleGuidance.photographerGuidance,
+      subjectGuidance: roleGuidance.subjectGuidance,
+    });
+    notifySession(sessionId, {
+      type: "readyStateUpdated",
+      sessionId,
+      trialId: trialId || null,
+      frameId,
+      ready: roleGuidance.ready,
+    });
+
+    res.json(payload);
+  } catch (error) {
+    console.error("frame analysis failed:", error);
+    next(error);
+  }
 });
 
 app.delete("/api/session/:sessionId", (req, res) => {
