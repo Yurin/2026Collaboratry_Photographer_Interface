@@ -355,32 +355,29 @@ private extension TakePhoto {
                 .accessibilityLabel("位置と大きさをリセット")
             }
 
-            Button {
-                Task {
-                    await uploadGuideToSession()
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    if isUploadingGuide {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    }
-
-                    Label(isUploadingGuide ? "ガイド共有中" : "ガイド共有を開始", systemImage: "square.and.arrow.up")
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .buttonStyle(AppCompactButtonStyle(filled: photographerGuideImage != nil && !isUploadingGuide))
-            .disabled(photographerGuideImage == nil || isUploadingGuide || localSessionID.isEmpty)
-
-            if let guideShareMessage {
-                Text(guideShareMessage)
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-            }
         }
         .appCard(padding: 12)
         .padding(.horizontal, 20)
+    }
+
+    var guideShareButton: some View {
+        Button {
+            Task {
+                await uploadGuideToSession()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                if isUploadingGuide {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                }
+
+                Label(isUploadingGuide ? "ガイド共有中" : "ガイド共有を開始", systemImage: "square.and.arrow.up")
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .buttonStyle(AppCompactButtonStyle(filled: photographerGuideImage != nil && !isUploadingGuide))
+        .disabled(photographerGuideImage == nil || isUploadingGuide || localSessionID.isEmpty)
     }
 
     var qrDisplayView: some View {
@@ -481,6 +478,16 @@ private extension TakePhoto {
             .overlay {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .stroke(AppStyle.border, lineWidth: 1)
+            }
+
+            if allowsPhotographerSupport && !selectedGuides.isEmpty {
+                guideShareButton
+
+                if let guideShareMessage {
+                    Text(guideShareMessage)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
             }
 
             if isWebSocketConnected {
