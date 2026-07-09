@@ -415,13 +415,24 @@ function sendVideoFrame() {
 
   try {
     const width = 320;
-    const height = Math.round((video.videoHeight / video.videoWidth) * width);
+    const height = Math.round(width * 4 / 3);
+    const sourceRect = centeredSourceRect(video.videoWidth, video.videoHeight, 3 / 4);
 
     shareCanvas.width = width;
     shareCanvas.height = height;
 
     const ctx = shareCanvas.getContext("2d");
-    ctx.drawImage(video, 0, 0, width, height);
+    ctx.drawImage(
+      video,
+      sourceRect.x,
+      sourceRect.y,
+      sourceRect.width,
+      sourceRect.height,
+      0,
+      0,
+      width,
+      height
+    );
 
     shareCanvas.toBlob((blob) => {
       if (!blob || !wsVideo || wsVideo.readyState !== WebSocket.OPEN) return;
@@ -436,6 +447,28 @@ function sendVideoFrame() {
     console.error("Error in sendVideoFrame:", error);
     showError("ライブ映像の送信に失敗しました。");
   }
+}
+
+function centeredSourceRect(sourceWidth, sourceHeight, targetAspect) {
+  const sourceAspect = sourceWidth / sourceHeight;
+
+  if (sourceAspect > targetAspect) {
+    const width = sourceHeight * targetAspect;
+    return {
+      x: (sourceWidth - width) / 2,
+      y: 0,
+      width,
+      height: sourceHeight,
+    };
+  }
+
+  const height = sourceWidth / targetAspect;
+  return {
+    x: 0,
+    y: (sourceHeight - height) / 2,
+    width: sourceWidth,
+    height,
+  };
 }
 
 function startLiveShare() {
@@ -546,27 +579,15 @@ captureBtn.addEventListener("click", () => {
   canvas.height = outputHeight;
 
   const ctx = canvas.getContext("2d");
-  const sourceAspect = video.videoWidth / video.videoHeight;
   const targetAspect = outputWidth / outputHeight;
-  let sourceX = 0;
-  let sourceY = 0;
-  let sourceWidth = video.videoWidth;
-  let sourceHeight = video.videoHeight;
-
-  if (sourceAspect > targetAspect) {
-    sourceWidth = video.videoHeight * targetAspect;
-    sourceX = (video.videoWidth - sourceWidth) / 2;
-  } else {
-    sourceHeight = video.videoWidth / targetAspect;
-    sourceY = (video.videoHeight - sourceHeight) / 2;
-  }
+  const sourceRect = centeredSourceRect(video.videoWidth, video.videoHeight, targetAspect);
 
   ctx.drawImage(
     video,
-    sourceX,
-    sourceY,
-    sourceWidth,
-    sourceHeight,
+    sourceRect.x,
+    sourceRect.y,
+    sourceRect.width,
+    sourceRect.height,
     0,
     0,
     outputWidth,
@@ -654,6 +675,10 @@ function applyGuideTransform(transform) {
   const translateY = guideTransform.offsetY * stageHeight;
   guide.style.transform = `translate(${translateX}px, ${translateY}px) scale(${guideTransform.scale})`;
 }
+
+window.addEventListener("resize", () => {
+  applyGuideTransform(guideTransform);
+});
 
 async function updateSessionGuide() {
   if (!sessionId || experimentCondition === "A") return;

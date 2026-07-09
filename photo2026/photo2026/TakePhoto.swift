@@ -435,7 +435,6 @@ private extension TakePhoto {
                                         y: sharedGuideVerticalOffset * proxy.size.height
                                     )
                                     .opacity(overlayOpacity)
-                                    .padding()
                                     .contentShape(Rectangle())
                                     .gesture(
                                         guideDragGesture(in: proxy.size)
