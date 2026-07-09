@@ -37,6 +37,15 @@ struct APIConfig {
         return components.url!
     }
 
+    static var sessionWsBaseURL: URL {
+        guard var components = URLComponents(url: wsBaseURL, resolvingAgainstBaseURL: false) else {
+            return wsBaseURL
+        }
+        components.path = "/ws/session"
+        components.query = nil
+        return components.url ?? wsBaseURL
+    }
+
     private static func userConfiguredURL(for key: String) -> URL? {
         guard let value = UserDefaults.standard.string(forKey: key) else {
             return nil

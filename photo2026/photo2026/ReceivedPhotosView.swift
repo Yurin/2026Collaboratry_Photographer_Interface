@@ -4,6 +4,7 @@ import UIKit
 
 struct ReceivedPhotosView: View {
     @Binding var sessionId: String
+    let refreshRequest: Int
     
     @State private var photos: [PhotoFile] = []
     @State private var isLoading = false
@@ -163,6 +164,12 @@ struct ReceivedPhotosView: View {
             }
             .refreshable {
                 await fetchPhotos()
+            }
+            .onChange(of: sessionId) { _, _ in
+                Task { await fetchPhotos() }
+            }
+            .onChange(of: refreshRequest) { _, _ in
+                Task { await fetchPhotos() }
             }
         }
     }
