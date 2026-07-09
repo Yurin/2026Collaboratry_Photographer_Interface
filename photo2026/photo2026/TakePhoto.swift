@@ -61,6 +61,7 @@ struct TakePhoto: View {
     @State private var photographerGuideType: GuideType = .rectangle
     @State private var overlayOpacity: Double = 0.45
     @State private var showGridOverlay: Bool = true
+    @State private var showReferencePreview: Bool = true
     @State private var sharedGuideHorizontalOffset: Double = 0.0
     @State private var sharedGuideVerticalOffset: Double = 0.0
     @State private var sharedGuideScale: Double = 1.0
@@ -327,8 +328,7 @@ private extension TakePhoto {
                     .foregroundColor(AppStyle.secondaryText)
             }
 
-            guideSelectorView
-                .padding(.horizontal, -20)
+            guideSelectionControlView
 
             guideTypeControlView
                 .padding(.horizontal, -20)
@@ -448,6 +448,7 @@ private extension TakePhoto {
                                     .allowsHitTesting(false)
                             }
 
+                            referencePreviewOverlay
                             gridToggleButton
                         }
                     } else {
@@ -471,6 +472,7 @@ private extension TakePhoto {
                                 .allowsHitTesting(false)
                         }
 
+                        referencePreviewOverlay
                         gridToggleButton
                     }
                 }
@@ -492,6 +494,103 @@ private extension TakePhoto {
                     .foregroundColor(connectionState.color)
             }
         }
+    }
+
+    var guideSelectionControlView: some View {
+        HStack {
+            Text("表示するガイド")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+
+            Spacer()
+
+            if selectedGuides.count > 1 {
+                Picker("表示するガイド", selection: $currentGuideIndex) {
+                    ForEach(Array(selectedGuides.enumerated()), id: \.element.id) { index, guide in
+                        Text(guide.title).tag(index)
+                    }
+                }
+                .pickerStyle(.menu)
+            } else {
+                Text(currentGuide?.title ?? "ガイドなし")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundColor(AppStyle.secondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+        }
+        .padding(12)
+        .background(AppStyle.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(AppStyle.border, lineWidth: 1)
+        }
+    }
+
+    var referencePreviewOverlay: some View {
+        VStack {
+            HStack(alignment: .top) {
+                if showReferencePreview, let guide = currentGuide, let image = guide.referenceUIImage {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "photo")
+                                .font(.caption2.weight(.black))
+
+                            Text(guide.title)
+                                .font(.caption2.weight(.black))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+
+                            Button {
+                                showReferencePreview = false
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.caption2.weight(.black))
+                                    .frame(width: 22, height: 22)
+                            }
+                            .accessibilityLabel("元画像を隠す")
+                        }
+                        .foregroundColor(.white)
+
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 86, height: 112)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .padding(8)
+                    .frame(width: 126, alignment: .leading)
+                    .background(Color.black.opacity(0.54))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                    }
+                } else if currentGuide?.referenceUIImage != nil {
+                    Button {
+                        showReferencePreview = true
+                    } label: {
+                        Image(systemName: "photo")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(Color.black.opacity(0.48))
+                            .clipShape(Circle())
+                            .overlay {
+                                Circle().stroke(Color.white.opacity(0.18), lineWidth: 1)
+                            }
+                    }
+                    .accessibilityLabel("元画像を表示")
+                }
+
+                Spacer()
+            }
+
+            Spacer()
+        }
+        .padding(10)
     }
 
     var gridToggleButton: some View {
@@ -808,6 +907,7 @@ private extension TakePhoto {
         isSavingPhotos = false
         overlayOpacity = 0.45
         showGridOverlay = true
+        showReferencePreview = true
         resetSharedGuideTransform()
         shouldReconnectWebSocket = false
     }
