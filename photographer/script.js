@@ -1,5 +1,6 @@
 const video = document.getElementById("video");
 const guide = document.getElementById("guide");
+const cameraStage = document.querySelector(".camera-stage");
 const gridOverlay = document.getElementById("gridOverlay");
 const opacitySlider = document.getElementById("opacitySlider");
 const toggleGridBtn = document.getElementById("toggleGridBtn");
@@ -647,7 +648,11 @@ function applyGuideTransform(transform) {
 
   opacitySlider.value = guideTransform.opacity;
   guide.style.opacity = String(guideTransform.opacity);
-  guide.style.transform = `translate(${guideTransform.offsetX * 100}%, ${guideTransform.offsetY * 100}%) scale(${guideTransform.scale})`;
+  const stageWidth = cameraStage?.clientWidth || guide.clientWidth || 0;
+  const stageHeight = cameraStage?.clientHeight || guide.clientHeight || 0;
+  const translateX = guideTransform.offsetX * stageWidth;
+  const translateY = guideTransform.offsetY * stageHeight;
+  guide.style.transform = `translate(${translateX}px, ${translateY}px) scale(${guideTransform.scale})`;
 }
 
 async function updateSessionGuide() {

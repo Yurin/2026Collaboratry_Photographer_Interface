@@ -477,7 +477,7 @@ private extension TakePhoto {
                     }
                 }
             }
-            .frame(height: 430)
+            .aspectRatio(3.0 / 4.0, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
