@@ -6,9 +6,14 @@ struct HomeView: View {
     @Binding var resetID: UUID
     @Binding var pendingSelectedGuides: [GuideItem]
 
+    private let actionColumns = [
+        GridItem(.flexible(), spacing: 10),
+        GridItem(.flexible(), spacing: 10)
+    ]
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
+            VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("PHOTO GUIDE")
                         .font(.system(size: 34, weight: .black, design: .rounded))
@@ -21,7 +26,7 @@ struct HomeView: View {
                 }
                 .padding(.top, 22)
 
-                VStack(spacing: 12) {
+                LazyVGrid(columns: actionColumns, spacing: 10) {
                     Button {
                         resetID = UUID()
                         selectedIndex = TabbarItem.photo.rawValue
@@ -459,39 +464,47 @@ struct HomeActionCard: View {
     let isPrimary: Bool
 
     var body: some View {
-        HStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             ZStack {
                 Circle()
                     .fill(isPrimary ? Color.black : AppStyle.elevatedSurface)
-                    .frame(width: 54, height: 54)
+                    .frame(width: 42, height: 42)
 
                 Image(systemName: systemImage)
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(isPrimary ? .white : AppStyle.primaryText)
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.headline.weight(.black))
+                    .font(.subheadline.weight(.black))
                     .foregroundStyle(isPrimary ? .black : AppStyle.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
 
                 Text(subtitle)
-                    .font(.subheadline)
+                    .font(.caption)
                     .foregroundStyle(isPrimary ? Color.black.opacity(0.6) : AppStyle.secondaryText)
                     .multilineTextAlignment(.leading)
+                    .lineLimit(2)
             }
 
             Spacer()
 
-            Image(systemName: "chevron.right")
-                .font(.subheadline.weight(.black))
-                .foregroundStyle(isPrimary ? Color.black.opacity(0.55) : AppStyle.secondaryText)
+            HStack {
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.black))
+                    .foregroundStyle(isPrimary ? Color.black.opacity(0.55) : AppStyle.secondaryText)
+            }
         }
-        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 138, alignment: .topLeading)
+        .padding(14)
         .background(isPrimary ? Color.white : AppStyle.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(isPrimary ? Color.clear : AppStyle.border, lineWidth: 1)
         }
     }

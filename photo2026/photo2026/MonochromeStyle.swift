@@ -89,3 +89,72 @@ struct AppSecondaryButtonStyle: ButtonStyle {
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
+
+struct AppCompactButtonStyle: ButtonStyle {
+    var filled = false
+    var destructive = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption.weight(.black))
+            .foregroundStyle(foregroundColor)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(backgroundColor)
+            .clipShape(Capsule())
+            .overlay {
+                Capsule().stroke(AppStyle.border, lineWidth: filled || destructive ? 0 : 1)
+            }
+            .opacity(configuration.isPressed ? 0.72 : 1)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+    }
+
+    private var foregroundColor: Color {
+        if destructive {
+            return AppStyle.primaryText
+        }
+        return filled ? Color.black : AppStyle.primaryText
+    }
+
+    private var backgroundColor: Color {
+        if destructive {
+            return AppStyle.danger
+        }
+        return filled ? Color.white : AppStyle.elevatedSurface
+    }
+}
+
+struct AppIconButtonStyle: ButtonStyle {
+    var selected = false
+    var destructive = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 15, weight: .black))
+            .foregroundStyle(foregroundColor)
+            .frame(width: 42, height: 42)
+            .background(backgroundColor)
+            .clipShape(Circle())
+            .overlay {
+                Circle().stroke(AppStyle.border, lineWidth: selected || destructive ? 0 : 1)
+            }
+            .opacity(configuration.isPressed ? 0.72 : 1)
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+    }
+
+    private var foregroundColor: Color {
+        if destructive {
+            return AppStyle.primaryText
+        }
+        return selected ? Color.black : AppStyle.primaryText
+    }
+
+    private var backgroundColor: Color {
+        if destructive {
+            return AppStyle.danger
+        }
+        return selected ? Color.white : AppStyle.elevatedSurface
+    }
+}

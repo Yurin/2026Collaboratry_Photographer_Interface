@@ -78,50 +78,82 @@ struct ExperimentSetupView: View {
                 }
 
                 Section("セッション操作") {
-                    Button("1. 実験セッションを作成") {
-                        Task { await createSession() }
-                    }
-                    .disabled(isWorking || !canCreateSession)
+                    LazyVGrid(columns: compactActionColumns, spacing: 10) {
+                        Button {
+                            Task { await createSession() }
+                        } label: {
+                            Label("セッション作成", systemImage: "plus.circle")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(AppCompactButtonStyle(filled: canCreateSession && !isWorking))
+                        .disabled(isWorking || !canCreateSession)
 
-                    Button("条件設定をサーバーへ反映") {
-                        Task { await updateCondition() }
-                    }
-                    .disabled(isWorking || !experimentState.hasSession || experimentState.isRunning)
+                        Button {
+                            Task { await updateCondition() }
+                        } label: {
+                            Label("条件反映", systemImage: "arrow.triangle.2.circlepath")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(AppCompactButtonStyle(filled: experimentState.hasSession && !experimentState.isRunning && !isWorking))
+                        .disabled(isWorking || !experimentState.hasSession || experimentState.isRunning)
 
-                    Button("2. 試行を作成") {
-                        Task { await createTrial() }
-                    }
-                    .disabled(isWorking || !experimentState.hasSession || activeTrialExists)
+                        Button {
+                            Task { await createTrial() }
+                        } label: {
+                            Label("試行作成", systemImage: "flag")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(AppCompactButtonStyle(filled: experimentState.hasSession && !activeTrialExists && !isWorking))
+                        .disabled(isWorking || !experimentState.hasSession || activeTrialExists)
 
-                    Button("3. 試行を開始して撮影画面へ") {
-                        Task { await startTrial() }
-                    }
-                    .disabled(isWorking || !canStartTrial)
+                        Button {
+                            Task { await startTrial() }
+                        } label: {
+                            Label("開始して撮影", systemImage: "camera.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(AppCompactButtonStyle(filled: canStartTrial && !isWorking))
+                        .disabled(isWorking || !canStartTrial)
 
-                    Button("試行を完了") {
-                        Task { await endTrial(aborted: false) }
+                        Button {
+                            Task { await endTrial(aborted: false) }
+                        } label: {
+                            Label("完了", systemImage: "checkmark.circle")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(AppCompactButtonStyle(filled: experimentState.isRunning && !isWorking))
+                        .disabled(isWorking || !experimentState.isRunning)
                     }
-                    .disabled(isWorking || !experimentState.isRunning)
 
                     TextField("中断理由", text: $abortReason)
 
-                    Button("試行を中断", role: .destructive) {
+                    Button(role: .destructive) {
                         Task { await endTrial(aborted: true) }
+                    } label: {
+                        Label("試行を中断", systemImage: "xmark.octagon")
+                            .frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(AppCompactButtonStyle(destructive: true))
                     .disabled(isWorking || !experimentState.hasTrial || isClosed)
                 }
 
                 Section {
-                    Button("現在状態を再読み込み") {
+                    Button {
                         Task { await reloadSession() }
+                    } label: {
+                        Label("再読み込み", systemImage: "arrow.clockwise")
                     }
+                    .buttonStyle(AppCompactButtonStyle())
                     .disabled(isWorking || !experimentState.hasSession)
 
-                    Button("通常モードへ戻す", role: .destructive) {
+                    Button(role: .destructive) {
                         experimentState.clear()
                         sessionId = ""
                         message = "通常モードへ戻しました。"
+                    } label: {
+                        Label("通常モードへ戻す", systemImage: "rectangle.portrait.and.arrow.right")
                     }
+                    .buttonStyle(AppCompactButtonStyle(destructive: true))
                 }
 
                 if let message {
@@ -183,6 +215,13 @@ struct ExperimentSetupView: View {
 
     private var experimenterPIN: String {
         Bundle.main.object(forInfoDictionaryKey: "ExperimenterPIN") as? String ?? "2026"
+    }
+
+    private var compactActionColumns: [GridItem] {
+        [
+            GridItem(.flexible(), spacing: 8),
+            GridItem(.flexible(), spacing: 8)
+        ]
     }
 
     private var canCreateSession: Bool {

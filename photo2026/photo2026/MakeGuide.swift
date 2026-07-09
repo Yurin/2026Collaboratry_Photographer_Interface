@@ -79,14 +79,9 @@ struct MakeGuide: View {
             AppSectionTitle(title: "参照写真", eyebrow: "REFERENCE")
 
             PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
-                Text("カメラロールから選ぶ")
-                    .fontWeight(.black)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.white)
-                    .foregroundStyle(.black)
-                    .clipShape(Capsule())
+                Label("カメラロール", systemImage: "photo")
             }
+            .buttonStyle(AppCompactButtonStyle(filled: true))
 
             if let selectedImage {
                 Image(uiImage: selectedImage)
@@ -181,12 +176,10 @@ struct MakeGuide: View {
                     Button {
                         resetGuideAdjustment()
                     } label: {
-                        Text("ガイド位置をリセット")
-                            .font(.caption)
+                        Image(systemName: "arrow.counterclockwise")
                     }
-                    .padding(8)
-                    .background(AppStyle.elevatedSurface)
-                    .clipShape(Capsule())
+                    .buttonStyle(AppIconButtonStyle())
+                    .accessibilityLabel("ガイド位置をリセット")
                 }
             } else {
                 placeholderCard(text: "まだガイドが生成されていません")
@@ -279,34 +272,28 @@ struct MakeGuide: View {
                 Button {
                     scaleCrop(by: 0.9)
                 } label: {
-                    Label("縮小", systemImage: "minus.magnifyingglass")
-                        .font(.caption)
+                    Image(systemName: "minus.magnifyingglass")
                 }
-                .padding(8)
-                .background(AppStyle.elevatedSurface)
-                .clipShape(Capsule())
+                .buttonStyle(AppIconButtonStyle())
+                .accessibilityLabel("トリミング範囲を縮小")
 
                 Button {
                     scaleCrop(by: 1.1)
                 } label: {
-                    Label("拡大", systemImage: "plus.magnifyingglass")
-                        .font(.caption)
+                    Image(systemName: "plus.magnifyingglass")
                 }
-                .padding(8)
-                .background(AppStyle.elevatedSurface)
-                .clipShape(Capsule())
+                .buttonStyle(AppIconButtonStyle())
+                .accessibilityLabel("トリミング範囲を拡大")
 
                 Spacer()
 
                 Button {
                     resetCrop()
                 } label: {
-                    Text("リセット")
-                        .font(.caption)
+                    Image(systemName: "arrow.counterclockwise")
                 }
-                .padding(8)
-                .background(AppStyle.elevatedSurface)
-                .clipShape(Capsule())
+                .buttonStyle(AppIconButtonStyle())
+                .accessibilityLabel("トリミング範囲をリセット")
             }
         }
     }
@@ -338,24 +325,18 @@ struct MakeGuide: View {
     }
 
     private var actionSection: some View {
-        VStack(spacing: 12) {
+        HStack(spacing: 10) {
             Button {
                 generateGuide()
             } label: {
                 if isGenerating {
                     ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
                 } else {
-                    Text("ガイドを生成する")
-                        .fontWeight(.semibold)
+                    Label("生成", systemImage: "wand.and.stars")
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
                 }
             }
-            .background(selectedImage == nil || isGenerating ? AppStyle.surface : Color.white)
-            .foregroundColor(selectedImage == nil || isGenerating ? .secondary : .black)
-            .clipShape(Capsule())
+            .buttonStyle(AppCompactButtonStyle(filled: selectedImage != nil && !isGenerating))
             .disabled(selectedImage == nil || isGenerating)
 
             Button {
@@ -363,18 +344,12 @@ struct MakeGuide: View {
             } label: {
                 if isSaving {
                     ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
                 } else {
-                    Text("このガイドを保存する")
-                        .fontWeight(.semibold)
+                    Label("保存", systemImage: "tray.and.arrow.down")
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
                 }
             }
-            .background(canSave ? AppStyle.success : AppStyle.surface)
-            .foregroundStyle(canSave ? .black : .secondary)
-            .clipShape(Capsule())
+            .buttonStyle(AppCompactButtonStyle(filled: canSave))
             .disabled(!canSave || isSaving)
         }
     }

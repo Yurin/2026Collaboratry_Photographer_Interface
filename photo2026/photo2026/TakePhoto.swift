@@ -9,7 +9,7 @@ enum TakePhotoPhase {
     case receivedPhoto
 }
 
-enum SessionDisplayMode {
+enum SessionDisplayMode: Hashable {
     case qr
     case preview
 }
@@ -171,79 +171,14 @@ private extension TakePhoto {
                         .foregroundColor(.secondary)
                 }
 
-                HStack(spacing: 12) {
-                    Button {
-                        displayMode = .qr
-                    } label: {
-                        Text("QR表示")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(displayMode == .qr ? Color.white : AppStyle.surface)
-                            .foregroundColor(displayMode == .qr ? .black : .white)
-                            .clipShape(Capsule())
-                    }
-
+                Picker("表示", selection: $displayMode) {
+                    Text("QR").tag(SessionDisplayMode.qr)
                     if allowsSubjectSupport {
-                        Button {
-                            displayMode = .preview
-                        } label: {
-                            Text("映像表示")
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(displayMode == .preview ? Color.white : AppStyle.surface)
-                                .foregroundColor(displayMode == .preview ? .black : .white)
-                                .clipShape(Capsule())
-                        }
+                        Text("映像").tag(SessionDisplayMode.preview)
                     }
                 }
+                .pickerStyle(.segmented)
                 .padding(.horizontal, 20)
-
-                if allowsPhotographerSupport {
-                    if let currentGuide {
-                        Text("表示中ガイド: \(currentGuide.title)")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    } else {
-                        Text("ガイドなし")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                }
-
-                if allowsPhotographerSupport && !selectedGuides.isEmpty {
-                    guideSelectorView
-                    guideTypeControlView
-
-                    HStack(spacing: 12) {
-                        Button {
-                            Task {
-                                await uploadGuideToSession()
-                            }
-                        } label: {
-                            HStack {
-                                if isUploadingGuide {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                }
-                                Text(isUploadingGuide ? "共有中..." : "ガイドを共有")
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(photographerGuideImage == nil || isUploadingGuide ? AppStyle.surface : Color.white)
-                            .foregroundColor(photographerGuideImage == nil || isUploadingGuide ? .secondary : .black)
-                            .clipShape(Capsule())
-                        }
-                        .disabled(photographerGuideImage == nil || isUploadingGuide || localSessionID.isEmpty)
-                    }
-                    .padding(.horizontal, 20)
-
-                    if let guideShareMessage {
-                        Text(guideShareMessage)
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 20)
-                    }
-                }
 
                     Group {
                         if displayMode == .qr {
@@ -257,32 +192,10 @@ private extension TakePhoto {
                     .padding(.horizontal, 20)
 
                     if allowsPhotographerSupport && !selectedGuides.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("撮影者画面のガイド")
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-
-                            Slider(value: $overlayOpacity, in: 0.1...1.0)
-                                .onChange(of: overlayOpacity) { _, _ in
-                                    sendGuideTransform()
-                                }
-
-                            Button {
-                                resetSharedGuideTransform()
-                                sendGuideTransform()
-                            } label: {
-                                Label("位置と大きさをリセット", systemImage: "arrow.counterclockwise")
-                                    .font(.caption.weight(.bold))
-                            }
-                            .padding(8)
-                            .background(AppStyle.elevatedSurface)
-                            .clipShape(Capsule())
-                        }
-                        .appCard()
-                        .padding(.horizontal, 20)
+                        guideControlsPanel
                     }
 
-                    VStack(spacing: 12) {
+                    VStack(spacing: 8) {
                         Text(connectionState.displayText)
                             .foregroundColor(connectionState.color)
                             .bold()
@@ -290,13 +203,10 @@ private extension TakePhoto {
                         Button(role: .destructive) {
                             endSession()
                         } label: {
-                            Text("終了")
+                            Label("終了", systemImage: "xmark.circle.fill")
                                 .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(AppStyle.danger)
-                                .foregroundColor(.white)
-                                .clipShape(Capsule())
                         }
+                        .buttonStyle(AppCompactButtonStyle(destructive: true))
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 90)
@@ -403,6 +313,76 @@ private extension TakePhoto {
         .padding(.horizontal, 20)
     }
 
+    var guideControlsPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let currentGuide {
+                Label("表示中: \(currentGuide.title)", systemImage: "photo")
+                    .font(.caption.weight(.bold))
+                    .foregroundColor(AppStyle.secondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            } else {
+                Label("ガイドなし", systemImage: "photo")
+                    .font(.caption.weight(.bold))
+                    .foregroundColor(AppStyle.secondaryText)
+            }
+
+            guideSelectorView
+                .padding(.horizontal, -20)
+
+            guideTypeControlView
+                .padding(.horizontal, -20)
+
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("ガイド透過")
+                        .font(.caption.weight(.bold))
+                        .foregroundColor(AppStyle.secondaryText)
+
+                    Slider(value: $overlayOpacity, in: 0.1...1.0)
+                        .onChange(of: overlayOpacity) { _, _ in
+                            sendGuideTransform()
+                        }
+                }
+
+                Button {
+                    resetSharedGuideTransform()
+                    sendGuideTransform()
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                }
+                .buttonStyle(AppIconButtonStyle())
+                .accessibilityLabel("位置と大きさをリセット")
+            }
+
+            Button {
+                Task {
+                    await uploadGuideToSession()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if isUploadingGuide {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    }
+
+                    Label(isUploadingGuide ? "ガイド共有中" : "ガイド共有を開始", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(AppCompactButtonStyle(filled: photographerGuideImage != nil && !isUploadingGuide))
+            .disabled(photographerGuideImage == nil || isUploadingGuide || localSessionID.isEmpty)
+
+            if let guideShareMessage {
+                Text(guideShareMessage)
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .appCard(padding: 12)
+        .padding(.horizontal, 20)
+    }
+
     var qrDisplayView: some View {
         VStack(spacing: 20) {
             Spacer()
@@ -432,9 +412,7 @@ private extension TakePhoto {
     }
 
     var remotePreviewView: some View {
-        VStack(spacing: 16) {
-            Spacer()
-
+        VStack(spacing: 10) {
             GeometryReader { proxy in
                 ZStack {
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -444,9 +422,8 @@ private extension TakePhoto {
                         ZStack {
                             Image(uiImage: remoteImage)
                                 .resizable()
-                                .scaledToFill()
+                                .scaledToFit()
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .clipped()
 
                             if allowsSubjectSupport, let guideImage = subjectGuideImage {
                                 Image(uiImage: guideImage)
@@ -498,7 +475,7 @@ private extension TakePhoto {
                     }
                 }
             }
-            .frame(height: 420)
+            .frame(height: 430)
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -514,8 +491,6 @@ private extension TakePhoto {
                     .font(.subheadline)
                     .foregroundColor(connectionState.color)
             }
-
-            Spacer()
         }
     }
 

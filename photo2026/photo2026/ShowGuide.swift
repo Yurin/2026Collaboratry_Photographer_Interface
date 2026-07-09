@@ -69,9 +69,12 @@ struct ShowGuide: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("再読み込み") {
+                    Button {
                         reloadGuides()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
                     }
+                    .accessibilityLabel("再読み込み")
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
@@ -156,20 +159,17 @@ struct ShowGuide: View {
     }
 
     private var bottomActionBar: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             Divider()
 
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Button {
                     selectedGuideIDs.removeAll()
                 } label: {
-                    Text("選択解除")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(AppStyle.elevatedSurface)
-                        .foregroundColor(.primary)
-                        .clipShape(Capsule())
+                    Image(systemName: "xmark")
                 }
+                .buttonStyle(AppIconButtonStyle())
+                .accessibilityLabel("選択解除")
                 .disabled(selectedGuideIDs.isEmpty)
 
                 Button {
@@ -179,19 +179,15 @@ struct ShowGuide: View {
                         selectedIndex = TabbarItem.photo.rawValue
                     }
                 } label: {
-                    Text(selectedGuideIDs.isEmpty ? "ガイドを選択して撮影へ" : "このガイドで撮影")
-                        .fontWeight(.semibold)
+                    Label(selectedGuideIDs.isEmpty ? "選択して撮影" : "このガイドで撮影", systemImage: "camera.fill")
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(selectedGuideIDs.isEmpty ? AppStyle.surface : Color.white)
-                        .foregroundColor(selectedGuideIDs.isEmpty ? .secondary : .black)
-                        .clipShape(Capsule())
                 }
+                .buttonStyle(AppCompactButtonStyle(filled: !selectedGuideIDs.isEmpty))
                 .disabled(selectedGuideIDs.isEmpty)
             }
             .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .padding(.bottom, 14)
+            .padding(.top, 8)
+            .padding(.bottom, 10)
             .background(AppStyle.background)
         }
     }
@@ -291,14 +287,10 @@ private struct GuideDetailView: View {
                 Button {
                     onToggleSelection()
                 } label: {
-                    Text(isSelected ? "このガイドを選択解除" : "このガイドを選択")
-                        .fontWeight(.semibold)
+                    Label(isSelected ? "選択解除" : "選択", systemImage: isSelected ? "xmark.circle" : "checkmark.circle")
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(isSelected ? AppStyle.success : Color.white)
-                        .foregroundStyle(.black)
-                        .clipShape(Capsule())
                 }
+                .buttonStyle(AppCompactButtonStyle(filled: true))
             }
             .padding(16)
         }
