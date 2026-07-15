@@ -52,6 +52,7 @@ struct TakePhoto: View {
 
     let selectedGuides: [GuideItem]
     @ObservedObject var experimentState: ExperimentState
+    let roleGuidanceUpdate: RoleGuidanceUpdate?
 
     @State private var phase: TakePhotoPhase = .qrAndPreview
     @State private var displayMode: SessionDisplayMode = .qr
@@ -69,6 +70,9 @@ struct TakePhoto: View {
     @State private var guideDragStartVerticalOffset: Double = 0.0
     @State private var guidePinchStartScale: Double = 1.0
     @State private var previewScrollRequest: Int = 0
+    @State private var displayedGuidanceKeys: Set<String> = []
+    @State private var lastDisplayedReady: [String: Bool] = [:]
+    @State private var subjectGuidanceDisplayLogs: [[String: Any]] = []
 
     @State private var localSessionID: String = UUID().uuidString
     @State private var connectionState: WebSocketConnectionState = .disconnected
@@ -141,6 +145,7 @@ struct TakePhoto: View {
         }
         .onAppear {
             startSession()
+            recordSubjectGuidanceDisplayIfNeeded(roleGuidanceUpdate)
         }
         .onDisappear {
             disconnectWebSocket()
@@ -150,6 +155,20 @@ struct TakePhoto: View {
             Task {
                 await uploadGuideToSession()
             }
+        }
+        .onChange(of: currentGuideIndex) { _, _ in
+            guard allowsPhotographerSupport else { return }
+            resetSharedGuideTransform()
+            Task {
+                await uploadGuideToSession()
+            }
+        }
+        .onChange(of: roleGuidanceUpdate?.analysisId ?? roleGuidanceUpdate?.photoId) { _, _ in
+            recordSubjectGuidanceDisplayIfNeeded(roleGuidanceUpdate)
+        }
+        .onChange(of: selectedIndex) { _, index in
+            guard index == TabbarItem.photo.rawValue else { return }
+            recordSubjectGuidanceDisplayIfNeeded(roleGuidanceUpdate)
         }
     }
 }
@@ -192,6 +211,8 @@ private extension TakePhoto {
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 20)
 
+                    subjectGuidancePanel
+
                     if allowsPhotographerSupport && !selectedGuides.isEmpty {
                         guideControlsPanel
                     }
@@ -218,6 +239,83 @@ private extension TakePhoto {
                     scrollProxy.scrollTo("capturePreview", anchor: .center)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    var subjectGuidancePanel: some View {
+        if allowsSubjectSupport, let update = roleGuidanceUpdate {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("被写体への指示", systemImage: "figure.stand")
+                    .font(.subheadline.weight(.bold))
+
+                if update.guideId == nil {
+                    Text("ガイド情報がないため、指示を表示できません。")
+                        .font(.footnote)
+                        .foregroundColor(AppStyle.secondaryText)
+                } else if update.subjectGuidance.isEmpty {
+                    Text("現在、被写体向けの指示はありません。")
+                        .font(.footnote)
+                        .foregroundColor(AppStyle.secondaryText)
+                } else {
+                    ForEach(update.subjectGuidance) { guidance in
+                        HStack(alignment: .top, spacing: 8) {
+                            Circle()
+                                .fill(guidanceColor(for: guidance.severity))
+                                .frame(width: 7, height: 7)
+                                .padding(.top, 6)
+
+                            Text(guidance.message)
+                                .font(.footnote.weight(.medium))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+
+                Divider()
+
+                HStack(spacing: 8) {
+                    readyStatusChip("構図", value: update.ready?.framingReady)
+                    readyStatusChip("ポーズ", value: update.ready?.poseReady)
+                    readyStatusChip("撮影準備", value: update.ready?.captureReady)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
+            }
+            .padding(.horizontal, 20)
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    func readyStatusChip(_ title: String, value: Bool?) -> some View {
+        VStack(spacing: 3) {
+            Text(title)
+                .font(.caption2)
+                .foregroundColor(AppStyle.secondaryText)
+            Text(value.map { $0 ? "OK" : "未完了" } ?? "—")
+                .font(.caption.weight(.bold))
+                .foregroundColor(value == true ? .green : AppStyle.secondaryText)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 7)
+        .background(Color.black.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    func guidanceColor(for severity: String?) -> Color {
+        switch severity {
+        case "high":
+            return .red
+        case "medium":
+            return .orange
+        default:
+            return .blue
         }
     }
 
@@ -858,7 +956,12 @@ private extension TakePhoto {
         guideShareMessage = nil
 
         do {
-            let url = try await SessionAPI.shared.uploadGuide(sessionId: localSessionID, image: guideImage)
+            let url = try await SessionAPI.shared.uploadGuide(
+                sessionId: localSessionID,
+                image: guideImage,
+                guideId: currentGuide?.guideId,
+                featuresUrl: currentGuide?.featuresUrl
+            )
             if let url = url {
                 guideShareMessage = "ガイドを共有しました。"
                 print("Guide URL: \(url)")
@@ -1012,6 +1115,85 @@ private extension TakePhoto {
         }
     }
 
+    func recordSubjectGuidanceDisplayIfNeeded(_ update: RoleGuidanceUpdate?) {
+        guard selectedIndex == TabbarItem.photo.rawValue,
+              allowsSubjectSupport,
+              let update else { return }
+        let displayKey = update.analysisId ?? update.photoId ?? ""
+        guard !displayKey.isEmpty, !displayedGuidanceKeys.contains(displayKey) else { return }
+
+        displayedGuidanceKeys.insert(displayKey)
+        let timestamp = Int64((Date().timeIntervalSince1970 * 1000).rounded())
+        var readyPayload: [String: Any] = [:]
+        if let value = update.ready?.framingReady { readyPayload["framingReady"] = value }
+        if let value = update.ready?.poseReady { readyPayload["poseReady"] = value }
+        if let value = update.ready?.captureReady { readyPayload["captureReady"] = value }
+        let guidancePayload = update.subjectGuidance.map { guidance in
+            var item: [String: Any] = [
+                "type": guidance.type,
+                "message": guidance.message,
+            ]
+            if let severity = guidance.severity { item["severity"] = severity }
+            if let value = guidance.value { item["value"] = value }
+            return item
+        }
+        let payload: [String: Any] = [
+            "type": "subject_guidance_displayed",
+            "sessionId": update.sessionId ?? sessionId,
+            "trialId": update.trialId ?? experimentState.trialId,
+            "analysisId": update.analysisId ?? "",
+            "photoId": update.photoId ?? "",
+            "clientId": update.clientId ?? "",
+            "captureSequence": update.captureSequence ?? -1,
+            "captureTimestamp": update.captureTimestamp ?? -1,
+            "analysisStartTimestamp": update.analysisStartTimestamp ?? -1,
+            "analysisEndTimestamp": update.analysisEndTimestamp ?? -1,
+            "displayTimestamp": timestamp,
+            "subjectGuidanceDisplayTimestamp": timestamp,
+            "subjectGuidance": guidancePayload,
+            "ready": readyPayload,
+        ]
+        subjectGuidanceDisplayLogs.append(payload)
+        printExperimentLog(payload)
+        logSubjectEvent("subject_guidance_displayed", payload: payload)
+        recordReadyTransitions(update: update, timestamp: timestamp)
+    }
+
+    func recordReadyTransitions(update: RoleGuidanceUpdate, timestamp: Int64) {
+        let values: [String: Bool?] = [
+            "framingReady": update.ready?.framingReady,
+            "poseReady": update.ready?.poseReady,
+            "captureReady": update.ready?.captureReady,
+        ]
+        for (readyKey, newValue) in values {
+            guard let newValue else { continue }
+            if let previousValue = lastDisplayedReady[readyKey], previousValue != newValue {
+                let payload: [String: Any] = [
+                    "type": "ready_state_changed",
+                    "sessionId": update.sessionId ?? sessionId,
+                    "trialId": update.trialId ?? experimentState.trialId,
+                    "analysisId": update.analysisId ?? "",
+                    "photoId": update.photoId ?? "",
+                    "captureSequence": update.captureSequence ?? -1,
+                    "readyKey": readyKey,
+                    "previousValue": previousValue,
+                    "newValue": newValue,
+                    "timestamp": timestamp,
+                ]
+                printExperimentLog(payload)
+                logSubjectEvent("ready_state_changed", payload: payload)
+            }
+            lastDisplayedReady[readyKey] = newValue
+        }
+    }
+
+    func printExperimentLog(_ payload: [String: Any]) {
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else { return }
+        print("ExperimentLog \(json)")
+    }
+
 }
 
 // MARK: - QR Code
@@ -1089,6 +1271,7 @@ struct CameraGridOverlay: View {
         resetID: .constant(UUID()),
         sessionId: .constant(""),
         selectedGuides: [],
-        experimentState: ExperimentState()
+        experimentState: ExperimentState(),
+        roleGuidanceUpdate: nil
     )
 }

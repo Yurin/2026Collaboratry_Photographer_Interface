@@ -28,6 +28,13 @@ const galleryPanel = document.getElementById("galleryPanel");
 const errorPanel = document.getElementById("errorPanel");
 const supportPanel = document.getElementById("supportPanel");
 const supportMessage = document.getElementById("supportMessage");
+const roleGuidancePanel = document.getElementById("roleGuidancePanel");
+const roleGuidancePhoto = document.getElementById("roleGuidancePhoto");
+const analysisState = document.getElementById("analysisState");
+const photographerGuidanceList = document.getElementById("photographerGuidanceList");
+const framingReady = document.getElementById("framingReady");
+const poseReady = document.getElementById("poseReady");
+const captureReady = document.getElementById("captureReady");
 const experimentStatus = document.getElementById("experimentStatus");
 const guideControls = document.querySelectorAll(".guide-control");
 const status = document.querySelector(".status");
@@ -39,7 +46,10 @@ let selectedPhotoIndex = null;
 let showGuide = true;
 let showGrid = true;
 let currentStream = null;
+// 撮影済み写真は、表示用画像と下書きphotoId・解析状態を一体で管理する。
 let photos = [];
+let latestCapturedClientId = null;
+let isSendingPhotos = false;
 let sessionId = "";
 let wsVideo = null;
 let wsSession = null;
@@ -58,6 +68,12 @@ let supportMessageTimer = null;
 let experimentCondition = null;
 let currentTrialId = null;
 let currentTrialState = null;
+let activeGuideId = null;
+let verifiedGuideIds = new Set();
+let latestRoleGuidance = null;
+let captureSequence = 0;
+let latestDisplayedCaptureSequence = null;
+let lastDisplayedReady = {};
 let eventSequence = 0;
 let pendingEvents = [];
 const shareCanvas = document.createElement("canvas");
@@ -116,6 +132,193 @@ function showSupportMessage(message, options = {}) {
   }
 }
 
+function photographerGuidanceEnabled() {
+  return experimentCondition !== "A";
+}
+
+function nowTimestamp() {
+  return Date.now();
+}
+
+function captureSequenceStorageKey() {
+  return `photoGuideCaptureSequence:${sessionId}`;
+}
+
+function restoreCaptureSequence() {
+  const storedSequence = Number(localStorage.getItem(captureSequenceStorageKey()));
+  captureSequence = Number.isSafeInteger(storedSequence) && storedSequence >= 0
+    ? storedSequence
+    : 0;
+}
+
+function nextCaptureSequence() {
+  captureSequence += 1;
+  localStorage.setItem(captureSequenceStorageKey(), String(captureSequence));
+  return captureSequence;
+}
+
+function recordForAnalysisPayload(payload) {
+  return photos.find((item) =>
+    (payload.photoId && item.draftPhotoId === payload.photoId) ||
+    (payload.clientId && item.clientId === payload.clientId) ||
+    (Number.isFinite(Number(payload.captureSequence)) &&
+      item.captureSequence === Number(payload.captureSequence))
+  );
+}
+
+function latestActiveCaptureSequence() {
+  return photos.reduce(
+    (latest, item) => item.deleted ? latest : Math.max(latest, item.captureSequence),
+    -1
+  );
+}
+
+function shouldDisplayAnalysisPayload(payload, record) {
+  const payloadSequence = Number(payload.captureSequence ?? record?.captureSequence);
+  return Boolean(
+    record &&
+    !record.deleted &&
+    Number.isFinite(payloadSequence) &&
+    payloadSequence >= latestActiveCaptureSequence() &&
+    (latestDisplayedCaptureSequence === null || payloadSequence >= latestDisplayedCaptureSequence) &&
+    (!currentTrialId || !record.trialId || record.trialId === currentTrialId) &&
+    (!payload.guideId || payload.guideId === activeGuideId)
+  );
+}
+
+function logReadyTransitions(record, payload, timestamp) {
+  const nextReady = payload.ready || {};
+  ["framingReady", "poseReady", "captureReady"].forEach((readyKey) => {
+    const previousValue = lastDisplayedReady[readyKey];
+    const newValue = nextReady[readyKey];
+    if (typeof previousValue === "boolean" &&
+        typeof newValue === "boolean" &&
+        previousValue !== newValue) {
+      logExperimentEvent("ready_state_changed", {
+        type: "ready_state_changed",
+        sessionId,
+        trialId: record.trialId,
+        analysisId: payload.analysisId || record.analysisId,
+        photoId: record.draftPhotoId,
+        captureSequence: record.captureSequence,
+        readyKey,
+        previousValue,
+        newValue,
+        timestamp,
+      }, record.trialId);
+    }
+    if (typeof newValue === "boolean") lastDisplayedReady[readyKey] = newValue;
+  });
+}
+
+function displayCompletedAnalysis(record, payload) {
+  if (!shouldDisplayAnalysisPayload(payload, record)) return false;
+  const timestamp = nowTimestamp();
+  const analysisId = payload.analysisId || record.analysisId || null;
+  const isFirstDisplay = record.displayedAnalysisId !== analysisId;
+  latestDisplayedCaptureSequence = record.captureSequence;
+  record.displayTimestamp = record.displayTimestamp || timestamp;
+  record.webGuidanceDisplayTimestamp = record.webGuidanceDisplayTimestamp || timestamp;
+  record.displayedAnalysisId = analysisId;
+  renderRoleGuidance(payload);
+  if (isFirstDisplay) {
+    logReadyTransitions(record, payload, timestamp);
+    logAnalysisEvent(record, "photographer_guidance_displayed", {
+      analysisId,
+      webGuidanceDisplayTimestamp: record.webGuidanceDisplayTimestamp,
+      photographerGuidance: payload.photographerGuidance || [],
+      ready: payload.ready || {},
+    });
+  }
+  return true;
+}
+
+function updateReadyChip(element, label, value) {
+  const known = typeof value === "boolean";
+  element.textContent = `${label} ${known ? (value ? "OK" : "調整中") : "—"}`;
+  element.classList.toggle("is-ready", value === true);
+}
+
+function renderRoleGuidance(payload = latestRoleGuidance) {
+  latestRoleGuidance = payload || null;
+  if (!payload || !photographerGuidanceEnabled()) {
+    roleGuidancePanel.hidden = true;
+    return;
+  }
+
+  roleGuidancePanel.hidden = false;
+  roleGuidancePhoto.textContent = payload.photoId ? `写真: ${payload.photoId}` : "";
+  analysisState.textContent = payload.analysisState || "解析済み";
+  photographerGuidanceList.innerHTML = "";
+
+  const guidance = Array.isArray(payload.photographerGuidance)
+    ? payload.photographerGuidance
+    : [];
+  const messages = guidance.length > 0
+    ? guidance
+    : [{ message: payload.errorMessage || "解析できませんでした", severity: "low" }];
+  messages.forEach((item) => {
+    const row = document.createElement("li");
+    row.textContent = item.message;
+    row.dataset.severity = item.severity || "low";
+    photographerGuidanceList.appendChild(row);
+  });
+
+  updateReadyChip(framingReady, "構図", payload.ready?.framingReady);
+  updateReadyChip(poseReady, "ポーズ", payload.ready?.poseReady);
+  updateReadyChip(captureReady, "撮影", payload.ready?.captureReady);
+}
+
+function showAnalysisProgress(photoId = null) {
+  renderRoleGuidance({
+    photoId,
+    photographerGuidance: [{ message: "撮影した写真を解析しています…", severity: "low" }],
+    ready: {},
+    analysisState: "解析中",
+  });
+}
+
+function showAnalysisWaiting(photoId = null) {
+  renderRoleGuidance({
+    photoId,
+    photographerGuidance: [{ message: "解析の準備をしています…", severity: "low" }],
+    ready: {},
+    analysisState: "解析待ち",
+  });
+}
+
+function showAnalysisSkipped(photoId, message) {
+  renderRoleGuidance({
+    photoId,
+    photographerGuidance: [{ message, severity: "low" }],
+    ready: {},
+    analysisState: "解析スキップ",
+  });
+}
+
+function showAnalysisFailure(photoId = null, errorReason = null) {
+  renderRoleGuidance({
+    photoId,
+    photographerGuidance: [],
+    ready: {},
+    analysisState: "解析失敗",
+    errorMessage: errorReason ? `解析できませんでした: ${errorReason}` : "解析できませんでした",
+  });
+}
+
+function applySessionGuide(guideState) {
+  if (!guideState) return;
+  const nextGuideId = guideState.guideId || null;
+  if (activeGuideId !== nextGuideId) {
+    latestRoleGuidance = null;
+    roleGuidancePanel.hidden = true;
+    verifiedGuideIds.clear();
+    lastDisplayedReady = {};
+  }
+  activeGuideId = nextGuideId;
+  if (guideState.url) applyGuideUrl(guideState.url);
+}
+
 function applyExperimentState(experiment) {
   if (!experiment) {
     experimentCondition = null;
@@ -125,6 +328,7 @@ function applyExperimentState(experiment) {
     guideControls.forEach((element) => {
       element.hidden = false;
     });
+    renderRoleGuidance();
     return;
   }
 
@@ -145,9 +349,11 @@ function applyExperimentState(experiment) {
   if (!photographerSupportEnabled) {
     guide.hidden = true;
     supportPanel.hidden = true;
+    roleGuidancePanel.hidden = true;
   } else if (showGuide && guideUrlOverride) {
     guide.hidden = false;
   }
+  renderRoleGuidance();
 }
 
 async function fetchExperimentState() {
@@ -169,13 +375,13 @@ async function fetchExperimentState() {
   }
 }
 
-function makeEvent(eventType, payload = {}) {
+function makeEvent(eventType, payload = {}, trialId = currentTrialId) {
   eventSequence += 1;
   return {
     eventId:
       crypto.randomUUID?.() ||
       `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    trialId: currentTrialId,
+    trialId,
     eventType,
     role: "photographer",
     clientTimestamp: new Date().toISOString(),
@@ -207,9 +413,21 @@ function persistPendingEvents() {
   );
 }
 
-async function logExperimentEvent(eventType, payload = {}) {
-  if (!currentTrialId) return;
-  pendingEvents.push(makeEvent(eventType, payload));
+async function logExperimentEvent(eventType, payload = {}, trialId = currentTrialId) {
+  const event = makeEvent(eventType, payload, trialId);
+  if (!trialId) {
+    try {
+      const key = `photoGuideLocalLogs:${sessionId || "no-session"}`;
+      const localEvents = JSON.parse(localStorage.getItem(key) || "[]");
+      localEvents.push(event);
+      localStorage.setItem(key, JSON.stringify(localEvents.slice(-1000)));
+    } catch (error) {
+      console.error("local experiment log persistence failed", error);
+    }
+    console.info("ExperimentLog", event);
+    return;
+  }
+  pendingEvents.push(event);
   persistPendingEvents();
   await flushPendingEvents();
 }
@@ -262,6 +480,7 @@ function loadSessionFromUrl() {
   if (sessionParam) {
     sessionId = sessionParam;
     restorePendingEvents();
+    restoreCaptureSequence();
     setConnectionState("connecting");
     connectSessionSocket();
     fetchExperimentState().then(updateSessionGuide);
@@ -294,7 +513,7 @@ function connectSessionSocket(isReconnect = false) {
 
       if (payload.type === "guide-updated" && payload.guide?.url) {
         if (experimentCondition !== "A") {
-          applyGuideUrl(payload.guide.url);
+          applySessionGuide(payload.guide);
         }
       }
 
@@ -316,8 +535,64 @@ function connectSessionSocket(isReconnect = false) {
         fetchExperimentState();
       }
 
+      if (payload.type === "analysisStarted") {
+        const record = recordForAnalysisPayload(payload);
+        if (record) {
+          record.analysisId = payload.analysisId || record.analysisId;
+          record.analysisStatus = "analyzing";
+          record.analysisStartTimestamp = payload.analysisStartTimestamp || record.analysisStartTimestamp;
+          record.analysisStartedReceivedTimestamp = nowTimestamp();
+          logAnalysisEvent(record, "analysis_started_received", {
+            analysisStartedReceivedTimestamp: record.analysisStartedReceivedTimestamp,
+          });
+          if (shouldDisplayAnalysisPayload(payload, record)) {
+            showAnalysisProgress(record.draftPhotoId);
+          }
+        }
+      }
+
+      if (payload.type === "roleGuidanceUpdated") {
+        const record = recordForAnalysisPayload(payload);
+        if (record) {
+          record.analysisId = payload.analysisId || record.analysisId;
+          record.analysisPayload = payload;
+          record.analysisStatus = payload.analysisStatus || "completed";
+          record.analysisStartTimestamp = payload.analysisStartTimestamp || record.analysisStartTimestamp;
+          record.analysisEndTimestamp = payload.analysisEndTimestamp || record.analysisEndTimestamp;
+          record.analysisCompletedReceivedTimestamp = nowTimestamp();
+          logAnalysisEvent(record, "analysis_completed_received", {
+            analysisCompletedReceivedTimestamp: record.analysisCompletedReceivedTimestamp,
+          });
+          displayCompletedAnalysis(record, payload);
+        }
+      }
+
+      if (payload.type === "analysisFailed") {
+        const record = recordForAnalysisPayload(payload);
+        if (record) {
+          record.analysisId = payload.analysisId || record.analysisId;
+          record.analysisStatus = "failed";
+          record.analysisStartTimestamp = payload.analysisStartTimestamp || record.analysisStartTimestamp;
+          record.analysisEndTimestamp = payload.analysisEndTimestamp || record.analysisEndTimestamp;
+          record.analysisFailedReceivedTimestamp = nowTimestamp();
+          record.errorReason = payload.errorReason || "analysis failed";
+          logAnalysisEvent(record, "analysis_failed_received", {
+            analysisFailedReceivedTimestamp: record.analysisFailedReceivedTimestamp,
+          });
+          if (shouldDisplayAnalysisPayload(payload, record)) {
+            showAnalysisFailure(record.draftPhotoId, record.errorReason);
+          }
+        }
+      }
+
       if (payload.type === "session-deleted") {
         guideUrlOverride = null;
+        activeGuideId = null;
+        verifiedGuideIds.clear();
+        latestRoleGuidance = null;
+        latestDisplayedCaptureSequence = null;
+        lastDisplayedReady = {};
+        roleGuidancePanel.hidden = true;
         guide.removeAttribute("src");
         guide.hidden = true;
         guideTransform = {
@@ -511,10 +786,74 @@ function stopLiveShare(shouldCloseSocket = true) {
   }
 }
 
-function resetCapturedPhotos() {
+function resetCapturedPhotos({ preserveGuidance = true } = {}) {
   photos = [];
+  selectedPhotoIndex = null;
+  if (!preserveGuidance) {
+    latestCapturedClientId = null;
+    latestRoleGuidance = null;
+    roleGuidancePanel.hidden = true;
+  }
   updateThumbnails();
   updatePhotoCount();
+}
+
+async function removeDraftFromServer(record) {
+  if (!record.draftPhotoId || record.draftStatus === "shared") return;
+  try {
+    await fetch(
+      `${API_BASE_PATH}/sessions/${encodeURIComponent(sessionId)}/draft-photos/${encodeURIComponent(record.draftPhotoId)}`,
+      { method: "DELETE" }
+    );
+  } catch (error) {
+    console.error("draft photo deletion failed", {
+      photoId: record.draftPhotoId,
+      error,
+    });
+  }
+}
+
+async function deleteDraftPhoto(record) {
+  record.deleted = true;
+  await removeDraftFromServer(record);
+}
+
+function discardCapturedPhotos(records) {
+  records.forEach((record) => {
+    record.deleted = true;
+    void deleteDraftPhoto(record);
+  });
+}
+
+function refreshLatestGuidance() {
+  const latest = photos[photos.length - 1] || null;
+  latestCapturedClientId = latest?.clientId || null;
+  if (latest && latest.guideId !== activeGuideId) {
+    latestRoleGuidance = null;
+    roleGuidancePanel.hidden = true;
+    return;
+  }
+  if (latest?.analysisPayload) {
+    renderRoleGuidance(latest.analysisPayload);
+  } else if (latest?.analysisStatus === "waiting") {
+    showAnalysisWaiting(latest.draftPhotoId);
+  } else if (latest?.analysisStatus === "analyzing") {
+    showAnalysisProgress(latest.draftPhotoId);
+  } else if (latest?.analysisStatus === "failed") {
+    showAnalysisFailure(latest.draftPhotoId);
+  } else if (latest?.analysisStatus === "skippedMissingGuide") {
+    showAnalysisSkipped(latest.draftPhotoId, "guideIdがないため解析をスキップしました");
+  } else if (latest?.analysisStatus === "skippedMissingReferenceGuide") {
+    showAnalysisSkipped(
+      latest.draftPhotoId,
+      "ReferenceGuideがないため解析をスキップしました"
+    );
+  } else if (!latest) {
+    latestRoleGuidance = null;
+    roleGuidancePanel.hidden = true;
+  } else {
+    roleGuidancePanel.hidden = true;
+  }
 }
 
 function finishCaptureAfterSend() {
@@ -630,12 +969,66 @@ captureBtn.addEventListener("click", () => {
   );
 
   const imageUrl = canvas.toDataURL("image/jpeg", 0.92);
-  photos.push(imageUrl);
+  const captureTimestamp = nowTimestamp();
+  const record = {
+    clientId:
+      crypto.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    imageUrl,
+    captureSequence: nextCaptureSequence(),
+    captureTimestamp,
+    draftPhotoId: null,
+    draftStatus: "uploading",
+    deleted: false,
+    uploadPromise: null,
+    analysisPromise: null,
+    analysisStatus: photographerGuidanceEnabled() ? "waiting" : "skippedCondition",
+    analysisStartTimestamp: null,
+    analysisEndTimestamp: null,
+    analysisId: null,
+    draftSaveStartTimestamp: null,
+    draftSaveEndTimestamp: null,
+    analysisStartedReceivedTimestamp: null,
+    analysisCompletedReceivedTimestamp: null,
+    analysisFailedReceivedTimestamp: null,
+    displayTimestamp: null,
+    webGuidanceDisplayTimestamp: null,
+    displayedAnalysisId: null,
+    analysisPayload: null,
+    errorReason: null,
+    guideId: activeGuideId,
+    trialId: currentTrialId,
+    guideTransform: {
+      translationX: guideTransform.offsetX,
+      translationY: guideTransform.offsetY,
+      scale: guideTransform.scale,
+    },
+  };
+  photos.push(record);
+  latestCapturedClientId = record.clientId;
   updateThumbnails();
   updatePhotoCount();
+
+  if (photographerGuidanceEnabled()) {
+    if (record.guideId) {
+      showAnalysisWaiting();
+    } else {
+      record.analysisStatus = "skippedMissingGuide";
+      record.errorReason = "guideIdMissing";
+      showAnalysisSkipped(null, "guideIdがないため解析をスキップしました");
+    }
+  }
+
   logExperimentEvent("photo_captured", {
     shotCount: photos.length,
+    clientPhotoId: record.clientId,
+    clientId: record.clientId,
+    captureSequence: record.captureSequence,
+    captureTimestamp,
+    guideId: record.guideId,
+    guideTransform: record.guideTransform,
   });
+  record.uploadPromise = uploadDraftAndAnalyze(record);
 });
 
 function updatePhotoCount() {
@@ -724,7 +1117,7 @@ async function updateSessionGuide() {
 
     const data = await response.json();
     if (data.success && data.guide?.url) {
-      applyGuideUrl(data.guide.url);
+      applySessionGuide(data.guide);
     }
   } catch (error) {
     console.error("guide fetch error", error);
@@ -732,11 +1125,185 @@ async function updateSessionGuide() {
   }
 }
 
+async function ensureReferenceGuide(guideId) {
+  if (!guideId) {
+    return false;
+  }
+  if (verifiedGuideIds.has(guideId)) return true;
+
+  try {
+    const response = await fetch(
+      `${API_BASE_PATH}/guides/${encodeURIComponent(guideId)}/features?sessionId=${encodeURIComponent(sessionId)}`
+    );
+    if (!response.ok) {
+      console.info("Role-Aware analysis skipped: ReferenceGuide is not available", {
+        guideId,
+        status: response.status,
+      });
+      return false;
+    }
+    verifiedGuideIds.add(guideId);
+    return true;
+  } catch (error) {
+    console.info("Role-Aware analysis skipped: ReferenceGuide lookup failed", error);
+    return false;
+  }
+}
+
+function displayForLatestRecord(record, callback) {
+  if (
+    !record.deleted &&
+    record.captureSequence >= latestActiveCaptureSequence() &&
+    record.guideId === activeGuideId
+  ) {
+    callback();
+  }
+}
+
+function logAnalysisEvent(record, eventType, extra = {}) {
+  logExperimentEvent(eventType, {
+    trialId: record.trialId,
+    guideId: record.guideId,
+    photoId: record.draftPhotoId,
+    clientId: record.clientId,
+    captureSequence: record.captureSequence,
+    captureTimestamp: record.captureTimestamp,
+    draftSaveStartTimestamp: record.draftSaveStartTimestamp,
+    draftSaveEndTimestamp: record.draftSaveEndTimestamp,
+    analysisId: record.analysisId,
+    analysisStartTimestamp: record.analysisStartTimestamp,
+    analysisEndTimestamp: record.analysisEndTimestamp,
+    analysisStartedReceivedTimestamp: record.analysisStartedReceivedTimestamp,
+    analysisCompletedReceivedTimestamp: record.analysisCompletedReceivedTimestamp,
+    analysisFailedReceivedTimestamp: record.analysisFailedReceivedTimestamp,
+    displayTimestamp: record.displayTimestamp,
+    webGuidanceDisplayTimestamp: record.webGuidanceDisplayTimestamp,
+    guideTransform: record.guideTransform,
+    analysisStatus: record.analysisStatus,
+    errorReason: record.errorReason,
+    ...extra,
+  }, record.trialId);
+}
+
+async function analyzeCapturedRecord(record) {
+  if (!record.guideId) {
+    record.analysisStatus = "skippedMissingGuide";
+    record.errorReason = "guideIdMissing";
+    logAnalysisEvent(record, "photo_analysis_skipped");
+    return;
+  }
+
+  if (!(await ensureReferenceGuide(record.guideId))) {
+    record.analysisStatus = "skippedMissingReferenceGuide";
+    record.errorReason = "referenceGuideMissing";
+    displayForLatestRecord(record, () => {
+      showAnalysisSkipped(record.draftPhotoId, "ReferenceGuideがないため解析をスキップしました");
+    });
+    logAnalysisEvent(record, "photo_analysis_skipped");
+    return;
+  }
+
+  record.analysisStatus = "analyzing";
+  record.analysisStartTimestamp = nowTimestamp();
+  displayForLatestRecord(record, () => showAnalysisProgress(record.draftPhotoId));
+
+  try {
+    const response = await fetch(
+      `${API_BASE_PATH}/sessions/${encodeURIComponent(sessionId)}/photos/${encodeURIComponent(record.draftPhotoId)}/analyze`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guideId: record.guideId,
+          trialId: record.trialId,
+          clientId: record.clientId,
+          captureSequence: record.captureSequence,
+          captureTimestamp: record.captureTimestamp,
+          guideTransform: record.guideTransform,
+        }),
+      }
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    record.analysisId = result.analysisId || record.analysisId;
+    record.analysisStartTimestamp = result.analysisStartTimestamp || record.analysisStartTimestamp;
+    record.analysisEndTimestamp = result.analysisEndTimestamp || nowTimestamp();
+    record.analysisStatus = result.analysisStatus || "completed";
+    record.analysisPayload = result;
+    displayCompletedAnalysis(record, result);
+    logAnalysisEvent(record, "photo_analysis_completed", {
+      alignmentError: result.alignmentError,
+      photographerGuidance: result.photographerGuidance,
+      subjectGuidance: result.subjectGuidance,
+      ready: result.ready,
+    });
+  } catch (error) {
+    record.analysisEndTimestamp = nowTimestamp();
+    record.analysisStatus = "failed";
+    record.errorReason = record.errorReason || error.message;
+    console.error("Role-Aware photo analysis failed", {
+      photoId: record.draftPhotoId,
+      error,
+    });
+    displayForLatestRecord(record, () => showAnalysisFailure(record.draftPhotoId));
+    logAnalysisEvent(record, "photo_analysis_failed");
+  }
+}
+
+async function uploadDraftAndAnalyze(record) {
+  if (!sessionId) {
+    record.draftStatus = "failed";
+    record.analysisStatus = "failed";
+    record.errorReason = "sessionIdMissing";
+    displayForLatestRecord(record, () => showAnalysisFailure());
+    logAnalysisEvent(record, "photo_analysis_failed");
+    return;
+  }
+
+  try {
+    record.draftSaveStartTimestamp = nowTimestamp();
+    logAnalysisEvent(record, "photo_draft_save_started");
+    const formData = new FormData();
+    formData.append("trialId", record.trialId || "");
+    formData.append("clientId", record.clientId);
+    formData.append("captureSequence", String(record.captureSequence));
+    formData.append("captureTimestamp", record.captureTimestamp);
+    formData.append("guideId", record.guideId || "");
+    formData.append("guideTransform", JSON.stringify(record.guideTransform));
+    formData.append("draft", dataURLtoBlob(record.imageUrl), "captured_photo.jpg");
+    const response = await fetch(
+      `${API_BASE_PATH}/sessions/${encodeURIComponent(sessionId)}/draft-photos`,
+      { method: "POST", body: formData }
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    record.draftSaveEndTimestamp = nowTimestamp();
+    record.draftPhotoId = result.photo?.photoId || null;
+    record.draftStatus = record.draftPhotoId ? "ready" : "failed";
+    logAnalysisEvent(record, "photo_draft_save_completed");
+
+    if (record.deleted) {
+      await deleteDraftPhoto(record);
+      return;
+    }
+    if (record.analysisStatus === "skippedCondition") return;
+    record.analysisPromise = analyzeCapturedRecord(record);
+  } catch (error) {
+    record.draftSaveEndTimestamp = nowTimestamp();
+    record.draftStatus = "failed";
+    record.analysisStatus = "failed";
+    record.errorReason = `draftUploadFailed:${error.message}`;
+    console.error("captured photo draft upload failed", error);
+    displayForLatestRecord(record, () => showAnalysisFailure());
+    logAnalysisEvent(record, "photo_analysis_failed");
+  }
+}
+
 function updateThumbnails() {
   thumbnailContainer.innerHTML = "";
   thumbnailContainer.hidden = photos.length === 0;
 
-  photos.forEach((imageUrl, index) => {
+  photos.forEach((record, index) => {
     const thumbnail = document.createElement("button");
     thumbnail.type = "button";
     thumbnail.className = "thumbnail";
@@ -746,7 +1313,7 @@ function updateThumbnails() {
     thumbnail.setAttribute("aria-label", `写真 ${index + 1} をプレビュー`);
 
     const img = document.createElement("img");
-    img.src = imageUrl;
+    img.src = record.imageUrl;
     img.alt = `撮影した写真 ${index + 1}`;
 
     const deleteBtn = document.createElement("button");
@@ -756,16 +1323,25 @@ function updateThumbnails() {
     deleteBtn.setAttribute("aria-label", `写真 ${index + 1} を削除`);
     deleteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (isSendingPhotos) {
+        showActionHint("写真の送信準備中は削除できません。少し待ってからお試しください。");
+        return;
+      }
       if (selectedPhotoIndex === index) {
         selectedPhotoIndex = null;
       } else if (selectedPhotoIndex !== null && selectedPhotoIndex > index) {
         selectedPhotoIndex -= 1;
       }
-      photos.splice(index, 1);
+      const [deletedRecord] = photos.splice(index, 1);
+      void deleteDraftPhoto(deletedRecord);
       updateThumbnails();
       updatePhotoCount();
+      if (deletedRecord.clientId === latestCapturedClientId) {
+        refreshLatestGuidance();
+      }
       logExperimentEvent("photo_deleted", {
         deletedIndex: index,
+        photoId: deletedRecord.draftPhotoId,
         remainingCount: photos.length,
       });
     });
@@ -784,7 +1360,7 @@ function updateThumbnails() {
 
 function showPhotoPreview(index) {
   selectedPhotoIndex = index;
-  previewImage.src = photos[index];
+  previewImage.src = photos[index].imageUrl;
   photoPreviewOverlay.hidden = false;
 }
 
@@ -818,8 +1394,14 @@ clearBtn.addEventListener("click", () => {
     );
     return;
   }
+  if (isSendingPhotos) {
+    showActionHint("写真の送信準備中はクリアできません。少し待ってからお試しください。");
+    return;
+  }
   if (confirm("すべての写真を削除しますか？")) {
-    resetCapturedPhotos();
+    const discardedRecords = [...photos];
+    resetCapturedPhotos({ preserveGuidance: false });
+    discardCapturedPhotos(discardedRecords);
     logExperimentEvent("photos_cleared");
   }
 });
@@ -839,8 +1421,12 @@ deleteSessionBtn.addEventListener("click", async () => {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    resetCapturedPhotos();
+    resetCapturedPhotos({ preserveGuidance: false });
     guideUrlOverride = null;
+    activeGuideId = null;
+    verifiedGuideIds.clear();
+    latestRoleGuidance = null;
+    roleGuidancePanel.hidden = true;
     guide.removeAttribute("src");
     guide.hidden = true;
     guideTransform = {
@@ -871,29 +1457,61 @@ sendBtn.addEventListener("click", async () => {
     return;
   }
 
+  isSendingPhotos = true;
   sendBtn.disabled = true;
-  sendBtn.textContent = "送信中...";
+  sendBtn.textContent = "送信準備中...";
 
   try {
-    const formData = new FormData();
-    formData.append("sessionId", sessionId);
-    if (currentTrialId) {
-      formData.append("trialId", currentTrialId);
-      formData.append("clientTimestamp", new Date().toISOString());
-    }
-    photos.forEach((imageUrl, index) => {
-      const blob = dataURLtoBlob(imageUrl);
-      formData.append("photos", blob, `photo_${index}.jpg`);
-    });
+    const recordsToSend = [...photos];
+    await Promise.allSettled(
+      recordsToSend.map((record) => record.uploadPromise).filter(Boolean)
+    );
+    sendBtn.textContent = "送信中...";
 
-    const response = await fetch(`${API_BASE_PATH}/photos`, {
-      method: "POST",
-      body: formData,
-    });
+    const canPromoteDrafts = recordsToSend.every(
+      (record) => record.draftStatus === "ready" && record.draftPhotoId
+    );
+    let response;
+    if (canPromoteDrafts) {
+      response = await fetch(
+        `${API_BASE_PATH}/sessions/${encodeURIComponent(sessionId)}/photos/share`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            photoIds: recordsToSend.map((record) => record.draftPhotoId),
+            trialId: currentTrialId,
+            clientTimestamp: new Date().toISOString(),
+          }),
+        }
+      );
+    } else {
+      console.info("draft promotion unavailable; falling back to the existing photo upload flow");
+      const formData = new FormData();
+      formData.append("sessionId", sessionId);
+      if (currentTrialId) {
+        formData.append("trialId", currentTrialId);
+        formData.append("clientTimestamp", new Date().toISOString());
+      }
+      recordsToSend.forEach((record, index) => {
+        formData.append("photos", dataURLtoBlob(record.imageUrl), `photo_${index}.jpg`);
+      });
+      response = await fetch(`${API_BASE_PATH}/photos`, {
+        method: "POST",
+        body: formData,
+      });
+    }
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     const result = await response.json();
+    if (canPromoteDrafts) {
+      recordsToSend.forEach((record) => { record.draftStatus = "shared"; });
+    } else {
+      recordsToSend
+        .filter((record) => record.draftPhotoId)
+        .forEach((record) => { void removeDraftFromServer(record); });
+    }
     clearError();
     await logExperimentEvent("photos_sent", {
       photoCount: result.files?.length || photos.length,
@@ -912,6 +1530,7 @@ sendBtn.addEventListener("click", async () => {
     showError("写真の送信に失敗しました。サーバー接続とセッションIDを確認してください。");
     logExperimentEvent("photos_send_failed", { message: error.message });
   } finally {
+    isSendingPhotos = false;
     sendBtn.disabled = photos.length === 0;
     sendBtn.textContent = "送信";
   }

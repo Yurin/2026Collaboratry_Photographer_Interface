@@ -7,6 +7,10 @@ struct ContentView: View {
     @State private var sessionId: String = ""
     @State private var photoRefreshRequest: Int = 0
     @State private var sessionSocketTask: URLSessionWebSocketTask?
+    @State private var shouldReconnectSessionSocket = false
+    @State private var roleGuidanceUpdate: RoleGuidanceUpdate?
+    @State private var latestRoleGuidanceCaptureSequence: Int?
+    @State private var latestRoleGuidanceCaptureTimestamp: Int64?
     @StateObject private var experimentState = ExperimentState()
 
     var body: some View {
@@ -26,7 +30,8 @@ struct ContentView: View {
                     resetID: $takePhotoResetID,
                     sessionId: $sessionId,
                     selectedGuides: pendingSelectedGuides,
-                    experimentState: experimentState
+                    experimentState: experimentState,
+                    roleGuidanceUpdate: roleGuidanceUpdate
                 )
                 .id(takePhotoResetID)
                 .tag(TabbarItem.photo.rawValue)
@@ -87,14 +92,31 @@ struct ContentView: View {
         }
         .appScreen()
         .onAppear {
+            shouldReconnectSessionSocket = true
             connectSessionSocket()
         }
         .onDisappear {
             disconnectSessionSocket()
         }
         .onChange(of: sessionId) { _, _ in
+            roleGuidanceUpdate = nil
+            latestRoleGuidanceCaptureSequence = nil
+            latestRoleGuidanceCaptureTimestamp = nil
+            shouldReconnectSessionSocket = true
             connectSessionSocket()
             photoRefreshRequest += 1
+        }
+        .onChange(of: experimentState.condition) { _, condition in
+            if experimentState.isRunning && condition != .roleBased {
+                roleGuidanceUpdate = nil
+                latestRoleGuidanceCaptureSequence = nil
+                latestRoleGuidanceCaptureTimestamp = nil
+            }
+        }
+        .onChange(of: experimentState.trialId) { _, _ in
+            roleGuidanceUpdate = nil
+            latestRoleGuidanceCaptureSequence = nil
+            latestRoleGuidanceCaptureTimestamp = nil
         }
     }
 
@@ -115,8 +137,8 @@ struct ContentView: View {
         .clipShape(Capsule())
     }
 
-    func connectSessionSocket() {
-        disconnectSessionSocket()
+    func connectSessionSocket(isReconnect: Bool = false) {
+        disconnectSessionSocket(allowReconnect: true)
 
         guard !sessionId.isEmpty,
               var components = URLComponents(url: APIConfig.sessionWsBaseURL, resolvingAgainstBaseURL: false) else {
@@ -132,12 +154,27 @@ struct ContentView: View {
         let task = URLSession.shared.webSocketTask(with: url)
         sessionSocketTask = task
         task.resume()
-        receiveSessionSocketMessage(from: task)
+        print("\(isReconnect ? "Reconnecting" : "Connecting") session WebSocket: \(url.absoluteString)")
+        task.sendPing { error in
+            DispatchQueue.main.async {
+                guard sessionSocketTask === task else { return }
+                if let error {
+                    print("session socket connection error: \(error)")
+                    sessionSocketTask = nil
+                    roleGuidanceUpdate = nil
+                    scheduleSessionSocketReconnect()
+                    return
+                }
+                receiveSessionSocketMessage(from: task)
+            }
+        }
     }
 
-    func disconnectSessionSocket() {
-        sessionSocketTask?.cancel(with: .goingAway, reason: nil)
+    func disconnectSessionSocket(allowReconnect: Bool = false) {
+        shouldReconnectSessionSocket = allowReconnect
+        let task = sessionSocketTask
         sessionSocketTask = nil
+        task?.cancel(with: .goingAway, reason: nil)
     }
 
     func receiveSessionSocketMessage(from task: URLSessionWebSocketTask) {
@@ -145,6 +182,12 @@ struct ContentView: View {
             switch result {
             case .failure(let error):
                 print("session socket receive error: \(error)")
+                DispatchQueue.main.async {
+                    guard sessionSocketTask === task else { return }
+                    sessionSocketTask = nil
+                    roleGuidanceUpdate = nil
+                    scheduleSessionSocketReconnect()
+                }
 
             case .success(let message):
                 handleSessionSocketMessage(message)
@@ -157,21 +200,93 @@ struct ContentView: View {
     }
 
     func handleSessionSocketMessage(_ message: URLSessionWebSocketTask.Message) {
-        guard case .string(let text) = message,
-              let data = text.data(using: .utf8),
-              let payload = try? JSONDecoder().decode(SessionSocketPayload.self, from: data) else {
+        let data: Data
+        switch message {
+        case .string(let text):
+            guard let messageData = text.data(using: .utf8) else { return }
+            data = messageData
+        case .data(let messageData):
+            data = messageData
+        @unknown default:
             return
         }
 
-        guard payload.sessionId == nil || payload.sessionId == sessionId else {
+        let decoder = JSONDecoder()
+        let payload: SessionSocketPayload
+        do {
+            payload = try decoder.decode(SessionSocketPayload.self, from: data)
+        } catch {
+            print("session socket JSON decode error: \(error)")
             return
         }
 
-        if payload.type == "photos-updated" {
-            DispatchQueue.main.async {
+        DispatchQueue.main.async {
+            guard payload.sessionId == nil || payload.sessionId == sessionId else { return }
+
+            if payload.type == "photos-updated" {
                 photoRefreshRequest += 1
                 selectedIndex = TabbarItem.receivedPhotos.rawValue
+                return
             }
+
+            if payload.type == "roleGuidanceUpdated" {
+                do {
+                    let update = try decoder.decode(RoleGuidanceUpdate.self, from: data)
+                    guard !experimentState.isRunning || experimentState.condition == .roleBased else {
+                        print("Ignored subject guidance for condition \(experimentState.condition.rawValue)")
+                        return
+                    }
+                    if experimentState.isRunning,
+                       let updateTrialId = update.trialId,
+                       updateTrialId != experimentState.trialId {
+                        print("Ignored roleGuidanceUpdated for stale trial: \(updateTrialId)")
+                        return
+                    }
+                    guard shouldAcceptRoleGuidance(update) else {
+                        print("Ignored stale roleGuidanceUpdated: \(update.photoId ?? "unknown")")
+                        return
+                    }
+                    roleGuidanceUpdate = update
+                    print("Received roleGuidanceUpdated: \(update.photoId ?? "unknown")")
+                } catch {
+                    print("roleGuidanceUpdated decode error: \(error)")
+                }
+            }
+        }
+    }
+
+    func shouldAcceptRoleGuidance(_ update: RoleGuidanceUpdate) -> Bool {
+        if let sequence = update.captureSequence {
+            if let latestRoleGuidanceCaptureSequence,
+               sequence < latestRoleGuidanceCaptureSequence {
+                return false
+            }
+            latestRoleGuidanceCaptureSequence = sequence
+            if let timestamp = update.captureTimestamp {
+                latestRoleGuidanceCaptureTimestamp = max(
+                    latestRoleGuidanceCaptureTimestamp ?? timestamp,
+                    timestamp
+                )
+            }
+            return true
+        }
+        if let timestamp = update.captureTimestamp {
+            if let latestRoleGuidanceCaptureTimestamp,
+               timestamp < latestRoleGuidanceCaptureTimestamp {
+                return false
+            }
+            latestRoleGuidanceCaptureTimestamp = timestamp
+        }
+        return true
+    }
+
+    func scheduleSessionSocketReconnect() {
+        guard shouldReconnectSessionSocket, !sessionId.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            guard shouldReconnectSessionSocket,
+                  !sessionId.isEmpty,
+                  sessionSocketTask == nil else { return }
+            connectSessionSocket(isReconnect: true)
         }
     }
 }

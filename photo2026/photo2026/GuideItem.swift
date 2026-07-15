@@ -4,6 +4,8 @@ import UIKit
 struct GuideItem: Identifiable, Codable, Hashable {
     let id: UUID
     var title: String
+    var guideId: String?
+    var featuresUrl: String?
     var referenceImagePath: String?
     var guideImagePath: String?
     var rectangleGuideImagePath: String?
@@ -87,7 +89,13 @@ final class GuideLibraryStore: ObservableObject {
     }
 
     @discardableResult
-    func addGuide(title: String, referenceImage: UIImage, guideImages: [GuideType: UIImage]) -> GuideItem? {
+    func addGuide(
+        title: String,
+        referenceImage: UIImage,
+        guideImages: [GuideType: UIImage],
+        guideId: String? = nil,
+        featuresUrl: String? = nil
+    ) -> GuideItem? {
         let id = UUID()
 
         guard let referenceImagePath = saveImage(referenceImage, fileName: "reference_\(id.uuidString).jpg") else {
@@ -110,6 +118,8 @@ final class GuideLibraryStore: ObservableObject {
         let newGuide = GuideItem(
             id: id,
             title: title,
+            guideId: guideId,
+            featuresUrl: featuresUrl,
             referenceImagePath: referenceImagePath,
             guideImagePath: fallbackGuidePath,
             rectangleGuideImagePath: rectanglePath,

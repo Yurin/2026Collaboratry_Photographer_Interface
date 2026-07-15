@@ -10,6 +10,8 @@ struct MakeGuide: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
     @State private var generatedGuideImages: [GuideType: UIImage] = [:]
+    @State private var generatedGuideId: String?
+    @State private var generatedFeaturesUrl: String?
     @State private var isGenerating: Bool = false
     @State private var showGenerationErrorAlert: Bool = false
     @State private var alertMessage: String = ""
@@ -380,24 +382,26 @@ struct MakeGuide: View {
 
         Task {
             do {
-                let guideUrls = try await SessionAPI.shared.generateGuideSet(
+                let generatedGuideSet = try await SessionAPI.shared.generateGuideSet(
                     sessionId: effectiveSessionId,
                     referenceImage: selectedImage,
                     cropRect: constrainedCropRect
                 )
 
-                guard !guideUrls.isEmpty else {
+                guard !generatedGuideSet.urls.isEmpty else {
                     throw SessionAPIError.invalidResponse
                 }
 
                 var downloadedImages: [GuideType: UIImage] = [:]
                 for guideType in GuideType.allCases {
-                    guard let guideUrl = guideUrls[guideType] else { continue }
+                    guard let guideUrl = generatedGuideSet.urls[guideType] else { continue }
                     downloadedImages[guideType] = try await downloadImage(from: guideUrl)
                 }
 
                 await MainActor.run {
                     generatedGuideImages = downloadedImages
+                    generatedGuideId = generatedGuideSet.guideId
+                    generatedFeaturesUrl = generatedGuideSet.featuresUrl
                     resetGuideAdjustment()
                 }
             } catch {
@@ -442,6 +446,8 @@ struct MakeGuide: View {
                 await MainActor.run {
                     self.selectedImage = uiImage
                     self.generatedGuideImages = [:]
+                    self.generatedGuideId = nil
+                    self.generatedFeaturesUrl = nil
                     self.cropRect = .centered(for: uiImage.size)
                     self.cropDragOffset = .zero
                     resetGuideAdjustment()
@@ -471,7 +477,9 @@ struct MakeGuide: View {
         store.addGuide(
             title: finalTitle,
             referenceImage: selectedImage,
-            guideImages: adjustedGuideImages
+            guideImages: adjustedGuideImages,
+            guideId: generatedGuideId,
+            featuresUrl: generatedFeaturesUrl
         )
 
         isSaving = false
@@ -485,6 +493,8 @@ struct MakeGuide: View {
         selectedPhotoItem = nil
         selectedImage = nil
         generatedGuideImages = [:]
+        generatedGuideId = nil
+        generatedFeaturesUrl = nil
         titleText = ""
         cropRect = .centered
         cropDragOffset = .zero

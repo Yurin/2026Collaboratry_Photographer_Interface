@@ -120,12 +120,27 @@ struct SessionGuideResponse: Decodable {
 struct SessionGuideSetResponse: Decodable {
     let success: Bool
     let sessionId: String?
+    let referenceGuide: GuideReference?
     let guides: [String: GuideFile]
 }
 
 struct GuideFile: Decodable {
+    let guideId: String?
     let filename: String
     let url: String
+    let featuresUrl: String?
+    let featuresAvailable: Bool?
+}
+
+struct GuideReference: Decodable {
+    let guideId: String
+    let featuresUrl: String
+}
+
+struct GeneratedGuideSet {
+    let urls: [GuideType: URL]
+    let guideId: String?
+    let featuresUrl: String?
 }
 
 struct PhotosListResponse: Decodable {
@@ -136,6 +151,115 @@ struct PhotosListResponse: Decodable {
 struct PhotoFile: Decodable {
     let filename: String
     let url: String
+}
+
+struct RoleGuidanceUpdate: Codable {
+    let type: String?
+    let analysisId: String?
+    let sessionId: String?
+    let trialId: String?
+    let photoId: String?
+    let clientId: String?
+    let captureSequence: Int?
+    let captureTimestamp: Int64?
+    let analysisStartTimestamp: Int64?
+    let analysisEndTimestamp: Int64?
+    let guideId: String?
+    let alignmentError: AlignmentError?
+    let photographerGuidance: [GuidanceItem]
+    let subjectGuidance: [GuidanceItem]
+    let ready: ReadyState?
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case analysisId
+        case sessionId
+        case trialId
+        case photoId
+        case clientId
+        case captureSequence
+        case captureTimestamp
+        case analysisStartTimestamp
+        case analysisEndTimestamp
+        case guideId
+        case alignmentError
+        case photographerGuidance
+        case subjectGuidance
+        case ready
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decodeIfPresent(String.self, forKey: .type)
+        analysisId = try container.decodeIfPresent(String.self, forKey: .analysisId)
+        sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
+        trialId = try container.decodeIfPresent(String.self, forKey: .trialId)
+        photoId = try container.decodeIfPresent(String.self, forKey: .photoId)
+        clientId = try container.decodeIfPresent(String.self, forKey: .clientId)
+        captureSequence = try container.decodeIfPresent(Int.self, forKey: .captureSequence)
+        captureTimestamp = try container.decodeIfPresent(Int64.self, forKey: .captureTimestamp)
+        analysisStartTimestamp = try container.decodeIfPresent(Int64.self, forKey: .analysisStartTimestamp)
+        analysisEndTimestamp = try container.decodeIfPresent(Int64.self, forKey: .analysisEndTimestamp)
+        guideId = try container.decodeIfPresent(String.self, forKey: .guideId)
+        alignmentError = try container.decodeIfPresent(AlignmentError.self, forKey: .alignmentError)
+        photographerGuidance = try container.decodeIfPresent(
+            [GuidanceItem].self,
+            forKey: .photographerGuidance
+        ) ?? []
+        subjectGuidance = try container.decodeIfPresent(
+            [GuidanceItem].self,
+            forKey: .subjectGuidance
+        ) ?? []
+        ready = try container.decodeIfPresent(ReadyState.self, forKey: .ready)
+    }
+}
+
+struct GuidanceItem: Codable, Identifiable {
+    let id: UUID
+    let type: String
+    let message: String
+    let severity: String?
+    let value: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case message
+        case severity
+        case value
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = UUID()
+        type = try container.decode(String.self, forKey: .type)
+        message = try container.decode(String.self, forKey: .message)
+        severity = try container.decodeIfPresent(String.self, forKey: .severity)
+        value = try container.decodeIfPresent(Double.self, forKey: .value)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(type, forKey: .type)
+        try container.encode(message, forKey: .message)
+        try container.encodeIfPresent(severity, forKey: .severity)
+        try container.encodeIfPresent(value, forKey: .value)
+    }
+}
+
+struct AlignmentError: Codable {
+    let centerError: Double?
+    let scaleError: Double?
+    let poseError: Double?
+    let upperBodyError: Double?
+    let faceError: Double?
+    let silhouetteError: Double?
+    let totalError: Double?
+}
+
+struct ReadyState: Codable {
+    let framingReady: Bool?
+    let poseReady: Bool?
+    let captureReady: Bool?
 }
 
 enum SessionAPIError: Error {
@@ -225,7 +349,7 @@ final class SessionAPI {
         sessionId: String,
         referenceImage: UIImage,
         cropRect: CropRect? = nil
-    ) async throws -> [GuideType: URL] {
+    ) async throws -> GeneratedGuideSet {
         guard let url = URL(string: "api/session/\(sessionId)/generate-guide-set", relativeTo: baseURL) else {
             throw SessionAPIError.invalidURL
         }
@@ -292,10 +416,20 @@ final class SessionAPI {
             urls[guideType] = guideURL
         }
 
-        return urls
+        let representativeFile = decoded.guides.values.first
+        return GeneratedGuideSet(
+            urls: urls,
+            guideId: decoded.referenceGuide?.guideId ?? representativeFile?.guideId,
+            featuresUrl: decoded.referenceGuide?.featuresUrl ?? representativeFile?.featuresUrl
+        )
     }
 
-    func uploadGuide(sessionId: String, image: UIImage) async throws -> URL? {
+    func uploadGuide(
+        sessionId: String,
+        image: UIImage,
+        guideId: String? = nil,
+        featuresUrl: String? = nil
+    ) async throws -> URL? {
         guard let url = URL(string: "api/session/\(sessionId)/guide", relativeTo: baseURL) else {
             throw SessionAPIError.invalidURL
         }
@@ -310,6 +444,18 @@ final class SessionAPI {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var body = Data()
+        if let guideId, !guideId.isEmpty {
+            body.append("--\(boundary)\r\n")
+            body.append("Content-Disposition: form-data; name=\"guideId\"\r\n\r\n")
+            body.append(guideId)
+            body.append("\r\n")
+        }
+        if let featuresUrl, !featuresUrl.isEmpty {
+            body.append("--\(boundary)\r\n")
+            body.append("Content-Disposition: form-data; name=\"featuresUrl\"\r\n\r\n")
+            body.append(featuresUrl)
+            body.append("\r\n")
+        }
         body.append("--\(boundary)\r\n")
         body.append("Content-Disposition: form-data; name=\"guide\"; filename=\"guide.png\"\r\n")
         body.append("Content-Type: image/png\r\n\r\n")

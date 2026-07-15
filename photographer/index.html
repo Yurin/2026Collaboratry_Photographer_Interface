@@ -39,6 +39,22 @@
             <div id="supportMessage" class="support-message"></div>
           </div>
 
+          <section id="roleGuidancePanel" class="role-guidance-panel" aria-live="polite" hidden>
+            <div class="role-guidance-header">
+              <div>
+                <div class="support-label">構図解析</div>
+                <div id="roleGuidancePhoto" class="role-guidance-photo"></div>
+              </div>
+              <div id="analysisState" class="analysis-state"></div>
+            </div>
+            <ul id="photographerGuidanceList" class="guidance-list"></ul>
+            <div class="ready-status" aria-label="Ready状態">
+              <span id="framingReady" class="ready-chip">構図 —</span>
+              <span id="poseReady" class="ready-chip">ポーズ —</span>
+              <span id="captureReady" class="ready-chip">撮影 —</span>
+            </div>
+          </section>
+
           <div id="experimentStatus" class="experiment-status" hidden></div>
 
           <label class="slider-area guide-control" hidden>

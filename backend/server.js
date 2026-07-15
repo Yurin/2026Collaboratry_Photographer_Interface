@@ -17,8 +17,10 @@ const uploadFileSizeLimit = Number(process.env.UPLOAD_FILE_SIZE_LIMIT || 20 * 10
 
 // backend/uploads に保存する
 const uploadRoot = path.join(__dirname, "uploads");
+const referenceGuideRoot = path.join(__dirname, "data", "reference_guides");
 const dataDirectories = {
   photos: "photos",
+  drafts: "drafts",
   references: "references",
   guides: "guides",
 };
@@ -36,6 +38,7 @@ const trialStates = new Set([
 const photographerDir = path.join(__dirname, "..", "photographer");
 
 fs.mkdirSync(uploadRoot, { recursive: true });
+fs.mkdirSync(referenceGuideRoot, { recursive: true });
 
 function safeSessionId(value, fallback = "default") {
   return ((value || fallback).trim() || fallback).replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -49,7 +52,9 @@ const storage = multer.diskStorage({
         ? "guides"
         : file.fieldname === "reference"
           ? "references"
-          : "photos";
+          : file.fieldname === "draft"
+            ? "drafts"
+            : "photos";
     const destinationDir = getDataDir(sessionId, dataType);
     fs.mkdirSync(destinationDir, { recursive: true });
     cb(null, destinationDir);
@@ -61,7 +66,14 @@ const storage = multer.diskStorage({
 
     const isGuide = file.fieldname === "guide";
     const isReference = file.fieldname === "reference";
-    const namePrefix = isGuide ? "guide_" : isReference ? "reference_" : "";
+    const isDraft = file.fieldname === "draft";
+    const namePrefix = isGuide
+      ? "guide_"
+      : isReference
+        ? "reference_"
+        : isDraft
+          ? "draft_"
+          : "";
 
     const uniqueSuffix = Math.random().toString(36).slice(2, 8);
     cb(null, `${namePrefix}${timestamp}_${uniqueSuffix}_${safeName}`);
@@ -153,6 +165,14 @@ function getGuideFeaturesDir(sessionId) {
 
 function getGuideFeaturesPath(sessionId, guideId) {
   return path.join(getGuideFeaturesDir(sessionId), `${safeIdentifier(guideId)}.json`);
+}
+
+function getCanonicalGuideFeaturesPath(guideId) {
+  return path.join(referenceGuideRoot, `${safeIdentifier(guideId)}.json`);
+}
+
+function getSessionGuideStatePath(sessionId) {
+  return path.join(getSessionDir(sessionId), "current-guide.json");
 }
 
 function getAnalysisDir(sessionId) {
@@ -491,10 +511,46 @@ function parseGuideTransform(value) {
   return value;
 }
 
+function parseOptionalNumber(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function parseOptionalInteger(value) {
+  const number = parseOptionalNumber(value);
+  return number !== null && Number.isSafeInteger(number) && number >= 0
+    ? number
+    : null;
+}
+
+function parseTimestamp(value) {
+  const numeric = parseOptionalNumber(value);
+  if (numeric !== null) return numeric;
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function analysisEventPayload(context, extra = {}) {
+  return {
+    analysisId: context.analysisId,
+    sessionId: context.sessionId,
+    trialId: context.trialId || null,
+    photoId: context.photoId || null,
+    clientId: context.clientId || null,
+    captureSequence: context.captureSequence,
+    captureTimestamp: context.captureTimestamp,
+    analysisStartTimestamp: context.analysisStartTimestamp,
+    guideId: context.guideId || null,
+    ...extra,
+  };
+}
+
 function findPhotoPath(sessionId, photoId) {
   const safePhotoId = safeIdentifier(photoId);
   const candidates = [
     path.join(getDataDir(sessionId, "photos"), safePhotoId),
+    path.join(getDataDir(sessionId, "drafts"), safePhotoId),
     path.join(getSessionDir(sessionId), safePhotoId),
   ];
   return candidates.find((candidate) => fs.existsSync(candidate)) || null;
@@ -507,18 +563,69 @@ function latestGuideFeaturesPath(sessionId) {
   return path.join(getGuideFeaturesDir(sessionId), featureFiles[0].filename);
 }
 
+function findGuideFeaturesAcrossSessions(guideId) {
+  if (!guideId || !fs.existsSync(uploadRoot)) return null;
+  for (const entry of fs.readdirSync(uploadRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const candidate = getGuideFeaturesPath(entry.name, guideId);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 function findGuideFeaturesPath(sessionId, guideId) {
   if (guideId) {
-    const exactPath = getGuideFeaturesPath(sessionId, guideId);
-    if (fs.existsSync(exactPath)) return exactPath;
+    if (sessionId) {
+      const exactPath = getGuideFeaturesPath(sessionId, guideId);
+      if (fs.existsSync(exactPath)) return exactPath;
+    }
+    const canonicalPath = getCanonicalGuideFeaturesPath(guideId);
+    if (fs.existsSync(canonicalPath)) return canonicalPath;
+    return findGuideFeaturesAcrossSessions(guideId);
   }
-  return latestGuideFeaturesPath(sessionId);
+  return sessionId ? latestGuideFeaturesPath(sessionId) : null;
 }
 
 function publicFeatureFile(sessionId, guideId) {
-  const filePath = getGuideFeaturesPath(sessionId, guideId);
-  if (!fs.existsSync(filePath)) return null;
+  const filePath = findGuideFeaturesPath(sessionId, guideId);
+  if (!filePath) return null;
   return readJsonFile(filePath);
+}
+
+function persistCanonicalGuideFeatures(featuresPath, guideId) {
+  const features = readJsonFile(featuresPath);
+  if (!features) return false;
+  writeJsonFile(getCanonicalGuideFeaturesPath(guideId), features);
+  return true;
+}
+
+function featuresPathFromUrl(featuresUrl, guideId) {
+  if (!featuresUrl || !guideId) return null;
+  try {
+    const url = new URL(featuresUrl, "http://local");
+    const expectedPath = `/api/guides/${encodeURIComponent(guideId)}/features`;
+    if (url.pathname !== expectedPath) return null;
+    const sourceSessionId = safeSessionId(url.searchParams.get("sessionId"), "");
+    if (!sourceSessionId) return null;
+    const sourcePath = getGuideFeaturesPath(sourceSessionId, guideId);
+    return fs.existsSync(sourcePath) ? sourcePath : null;
+  } catch {
+    return null;
+  }
+}
+
+function copyGuideFeaturesToSession(sessionId, guideId, featuresUrl) {
+  if (!sessionId || !guideId) return false;
+  const targetPath = getGuideFeaturesPath(sessionId, guideId);
+  if (fs.existsSync(targetPath)) return true;
+  const sourcePath =
+    featuresPathFromUrl(featuresUrl, guideId) ||
+    findGuideFeaturesPath("", guideId);
+  const features = sourcePath ? readJsonFile(sourcePath) : null;
+  if (!features) return false;
+  writeJsonFile(targetPath, features);
+  writeJsonFile(getCanonicalGuideFeaturesPath(guideId), features);
+  return true;
 }
 
 app.use(cors());
@@ -1300,6 +1407,155 @@ app.put(
   }
 );
 
+// 撮影直後解析用の下書き写真。iOSへはまだ共有しない。
+app.post(
+  "/api/sessions/:sessionId/draft-photos",
+  upload.single("draft"),
+  (req, res, next) => {
+    try {
+      const sessionId = safeSessionId(req.params.sessionId, "");
+      if (!sessionId || !req.file) {
+        return res.status(400).json({
+          success: false,
+          error: "sessionId and draft photo are required",
+        });
+      }
+
+      const photoId = req.file.filename;
+      const trialId = safeIdentifier(req.body.trialId);
+      const clientId = safeIdentifier(req.body.clientId);
+      const captureSequence = parseOptionalInteger(req.body.captureSequence);
+      const captureTimestamp = parseTimestamp(req.body.captureTimestamp);
+      const guideId = safeIdentifier(req.body.guideId);
+      const guideTransform = parseGuideTransform(req.body.guideTransform);
+      if (trialId) {
+        try {
+          appendTrialEvents(sessionId, trialId, [{
+            role: "photographer",
+            eventType: "photo_draft_uploaded",
+            clientTimestamp: captureTimestamp
+              ? new Date(captureTimestamp).toISOString()
+              : null,
+            payload: {
+              photoId,
+              clientId: clientId || null,
+              captureSequence,
+              captureTimestamp,
+              guideId: guideId || null,
+              guideTransform,
+              status: "draft",
+            },
+          }]);
+        } catch (error) {
+          console.error("draft photo event logging failed:", error);
+        }
+      }
+
+      res.json({
+        success: true,
+        sessionId,
+        photo: {
+          photoId,
+          filename: photoId,
+          status: "draft",
+          clientId: clientId || null,
+          captureSequence,
+          captureTimestamp,
+          trialId: trialId || null,
+          guideId: guideId || null,
+          guideTransform,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.delete("/api/sessions/:sessionId/draft-photos/:photoId", (req, res, next) => {
+  try {
+    const sessionId = safeSessionId(req.params.sessionId, "");
+    const photoId = safeIdentifier(req.params.photoId);
+    if (!sessionId || !photoId) {
+      return res.status(400).json({ success: false, error: "sessionId and photoId are required" });
+    }
+
+    const draftPath = path.join(getDataDir(sessionId, "drafts"), photoId);
+    const deleted = fs.existsSync(draftPath);
+    if (deleted) fs.unlinkSync(draftPath);
+    res.json({ success: true, sessionId, photoId, deleted });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 選択中の下書きだけを正式写真へ昇格し、この時点で初めてiOSへ通知する。
+app.post("/api/sessions/:sessionId/photos/share", (req, res, next) => {
+  try {
+    const sessionId = safeSessionId(req.params.sessionId, "");
+    const sourcePhotoIds = Array.isArray(req.body.photoIds) ? req.body.photoIds : [];
+    const photoIds = [...new Set(sourcePhotoIds.map((value) => safeIdentifier(value)).filter(Boolean))];
+    if (!sessionId || photoIds.length === 0) {
+      return res.status(400).json({ success: false, error: "sessionId and photoIds are required" });
+    }
+    if (photoIds.length > 50) {
+      return res.status(400).json({ success: false, error: "a maximum of 50 photos can be shared" });
+    }
+
+    const draftDir = getDataDir(sessionId, "drafts");
+    const photoDir = getDataDir(sessionId, "photos");
+    fs.mkdirSync(photoDir, { recursive: true });
+    const paths = photoIds.map((photoId) => ({
+      photoId,
+      draftPath: path.join(draftDir, photoId),
+      photoPath: path.join(photoDir, photoId),
+    }));
+    const missingPhotoIds = paths
+      .filter(({ draftPath, photoPath }) => !fs.existsSync(draftPath) && !fs.existsSync(photoPath))
+      .map(({ photoId }) => photoId);
+    if (missingPhotoIds.length > 0) {
+      return res.status(404).json({
+        success: false,
+        error: "draft photos not found",
+        missingPhotoIds,
+      });
+    }
+
+    for (const { draftPath, photoPath } of paths) {
+      if (fs.existsSync(draftPath) && !fs.existsSync(photoPath)) {
+        fs.renameSync(draftPath, photoPath);
+      }
+    }
+
+    const files = photoIds.map((filename) => ({
+      filename,
+      url: makeFileUrl(sessionId, filename, "photos"),
+    }));
+    const trialId = safeIdentifier(req.body.trialId);
+    if (trialId) {
+      try {
+        appendTrialEvents(sessionId, trialId, [{
+          role: "photographer",
+          eventType: "photos_uploaded",
+          clientTimestamp: req.body.clientTimestamp || null,
+          payload: {
+            photoCount: files.length,
+            photoIds,
+            source: "draftPromotion",
+          },
+        }]);
+      } catch (error) {
+        console.error("photo share event logging failed:", error);
+      }
+    }
+
+    res.json({ success: true, sessionId, files });
+    notifySession(sessionId, { type: "photos-updated", sessionId, files });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // 撮影者Webから写真を送信
 app.post("/api/photos", upload.array("photos"), (req, res, next) => {
   const sessionId = safeSessionId(req.body.sessionId);
@@ -1358,15 +1614,28 @@ app.post("/api/session/:sessionId/guide", upload.single("guide"), (req, res) => 
   }
 
   const url = makeFileUrl(sessionId, req.file.filename, "guides");
+  const guideId = safeIdentifier(req.body.guideId);
+  const sourceFeaturesUrl = String(req.body.featuresUrl || "").trim() || null;
+  const featuresAvailable = guideId
+    ? copyGuideFeaturesToSession(sessionId, guideId, sourceFeaturesUrl)
+    : false;
+  const featuresUrl = guideId
+    ? `/api/guides/${encodeURIComponent(guideId)}/features?sessionId=${encodeURIComponent(sessionId)}`
+    : null;
 
   const payload = {
     success: true,
     sessionId,
     guide: {
+      guideId: guideId || null,
       filename: req.file.filename,
       url,
+      featuresUrl,
+      featuresAvailable,
     },
   };
+
+  writeJsonFile(getSessionGuideStatePath(sessionId), payload.guide);
 
   res.json(payload);
   notifySession(sessionId, {
@@ -1391,8 +1660,8 @@ app.post("/api/session/:sessionId/generate-guide", upload.single("reference"), (
 
   const allowedTypes = new Set(["rectangle", "keypoints", "silhouette"]);
   const safeGuideType = allowedTypes.has(guideType) ? guideType : "rectangle";
-  const outputFilename = `guide_${safeGuideType}_${Date.now()}.png`;
-  const guideId = path.parse(outputFilename).name;
+  const guideId = `guide_${safeGuideType}_${Date.now()}_${randomUUID().slice(0, 8)}`;
+  const outputFilename = `${guideId}.png`;
   const guideDir = getDataDir(sessionId, "guides");
   fs.mkdirSync(guideDir, { recursive: true });
   const outputPath = path.join(guideDir, outputFilename);
@@ -1411,6 +1680,7 @@ app.post("/api/session/:sessionId/generate-guide", upload.single("reference"), (
       req.file.filename,
       cropParams
     );
+    persistCanonicalGuideFeatures(featuresPath, guideId);
   } catch (error) {
     console.error("guide generation failed:", error);
     return res.status(500).json({
@@ -1429,6 +1699,7 @@ app.post("/api/session/:sessionId/generate-guide", upload.single("reference"), (
       filename: outputFilename,
       url,
       featuresUrl: `/api/guides/${encodeURIComponent(guideId)}/features?sessionId=${encodeURIComponent(sessionId)}`,
+      featuresAvailable: true,
     },
   };
 
@@ -1452,7 +1723,7 @@ app.post("/api/session/:sessionId/generate-guide-set", upload.single("reference"
 
   const cropParams = parseCropParams(req.body);
   const guideTypes = ["rectangle", "keypoints", "silhouette"];
-  const batchId = Date.now();
+  const batchId = `${Date.now()}_${randomUUID().slice(0, 8)}`;
   const guideId = `guide_set_${batchId}`;
   const guides = {};
   const guideDir = getDataDir(sessionId, "guides");
@@ -1484,6 +1755,7 @@ app.post("/api/session/:sessionId/generate-guide-set", upload.single("reference"
       req.file.filename,
       cropParams
     );
+    persistCanonicalGuideFeatures(featuresPath, guideId);
   } catch (error) {
     console.error("guide set generation failed:", error);
     return res.status(500).json({
@@ -1533,11 +1805,16 @@ app.get("/api/session/:sessionId/guide", (req, res) => {
     guideFile.legacy ? null : "guides"
   );
 
+  const storedGuide = readJsonFile(getSessionGuideStatePath(sessionId));
+
   res.json({
     success: true,
     guide: {
+      guideId: storedGuide?.guideId || null,
       filename: guideFile.filename,
       url,
+      featuresUrl: storedGuide?.featuresUrl || null,
+      featuresAvailable: storedGuide?.featuresAvailable === true,
     },
   });
 });
@@ -1561,6 +1838,7 @@ app.get("/api/photos", (req, res) => {
     ...listLegacyFiles(
       sessionId,
       (filename) =>
+        filename !== "current-guide.json" &&
         !filename.startsWith("guide_") &&
         !filename.startsWith("reference_")
     ).map((file) => ({
@@ -1587,13 +1865,6 @@ app.get("/api/guides/:guideId/features", (req, res) => {
       error: "guideId is required",
     });
   }
-  if (!sessionId) {
-    return res.status(400).json({
-      success: false,
-      error: "sessionId is required",
-    });
-  }
-
   const referenceGuide = publicFeatureFile(sessionId, guideId);
   if (!referenceGuide) {
     return res.status(404).json({
@@ -1611,34 +1882,58 @@ app.get("/api/guides/:guideId/features", (req, res) => {
 });
 
 app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) => {
+  const context = {
+    analysisId: `analysis_${randomUUID()}`,
+    sessionId: safeSessionId(req.params.sessionId, ""),
+    trialId: safeIdentifier(req.body.trialId),
+    photoId: safeIdentifier(req.params.photoId),
+    clientId: safeIdentifier(req.body.clientId),
+    captureSequence: parseOptionalInteger(req.body.captureSequence),
+    captureTimestamp: parseTimestamp(req.body.captureTimestamp),
+    analysisStartTimestamp: Date.now(),
+    guideId: safeIdentifier(req.body.guideId),
+  };
+  const guideTransform = parseGuideTransform(req.body.guideTransform);
+
+  notifySession(context.sessionId, {
+    type: "analysisStarted",
+    ...analysisEventPayload(context),
+    guideTransform,
+    analysisStatus: "started",
+  });
+  if (context.trialId) {
+    try {
+      appendTrialEvents(context.sessionId, context.trialId, [{
+        role: "system",
+        eventType: "role_guidance_analysis_started",
+        payload: analysisEventPayload(context, { guideTransform }),
+      }]);
+    } catch (error) {
+      console.error("analysis started event logging failed:", error);
+    }
+  }
+
   try {
-    const sessionId = safeSessionId(req.params.sessionId, "");
-    const photoId = safeIdentifier(req.params.photoId);
-    const guideId = safeIdentifier(req.body.guideId);
-    const trialId = safeIdentifier(req.body.trialId);
-    const guideTransform = parseGuideTransform(req.body.guideTransform);
+    const { sessionId, photoId, guideId, trialId } = context;
 
     if (!sessionId || !photoId) {
-      return res.status(400).json({
-        success: false,
-        error: "sessionId and photoId are required",
-      });
+      const error = new Error("sessionId and photoId are required");
+      error.statusCode = 400;
+      throw error;
     }
 
     const photoPath = findPhotoPath(sessionId, photoId);
     if (!photoPath) {
-      return res.status(404).json({
-        success: false,
-        error: "photo not found",
-      });
+      const error = new Error("photo not found");
+      error.statusCode = 404;
+      throw error;
     }
 
     const referencePath = findGuideFeaturesPath(sessionId, guideId);
     if (!referencePath) {
-      return res.status(404).json({
-        success: false,
-        error: "reference guide features not found",
-      });
+      const error = new Error("reference guide features not found");
+      error.statusCode = 404;
+      throw error;
     }
 
     const observationPath = getObservationPath(sessionId, photoId);
@@ -1649,16 +1944,24 @@ app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) =>
     const referenceGuide = readJsonFile(referencePath);
     const liveObservation = readJsonFile(observationPath);
     const roleGuidance = readJsonFile(guidancePath);
+    const analysisEndTimestamp = Date.now();
     const payload = {
       success: true,
-      sessionId,
-      trialId: trialId || null,
-      guideId: referenceGuide?.guideId || guideId || null,
-      photoId,
+      ...analysisEventPayload(context, {
+        analysisEndTimestamp,
+        guideId: referenceGuide?.guideId || guideId || null,
+      }),
+      guideTransform,
       referenceGuide,
       liveObservation,
-      ...roleGuidance,
+      alignmentError: roleGuidance.alignmentError,
+      photographerGuidance: roleGuidance.photographerGuidance || [],
+      subjectGuidance: roleGuidance.subjectGuidance || [],
+      ready: roleGuidance.ready || {},
+      analysisStatus: "completed",
+      errorReason: null,
     };
+    writeJsonFile(guidancePath, payload);
 
     if (trialId) {
       try {
@@ -1666,6 +1969,12 @@ app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) =>
           role: "system",
           eventType: "role_guidance_analyzed",
           payload: {
+            analysisId: context.analysisId,
+            clientId: context.clientId || null,
+            captureSequence: context.captureSequence,
+            captureTimestamp: context.captureTimestamp,
+            analysisStartTimestamp: context.analysisStartTimestamp,
+            analysisEndTimestamp,
             guideId: payload.guideId,
             photoId,
             guideTransform,
@@ -1684,35 +1993,57 @@ app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) =>
 
     notifySession(sessionId, {
       type: "alignmentResult",
-      sessionId,
-      trialId: trialId || null,
-      photoId,
+      ...analysisEventPayload(context, { analysisEndTimestamp }),
       alignmentError: roleGuidance.alignmentError,
     });
     notifySession(sessionId, {
       type: "roleGuidanceUpdated",
-      sessionId,
-      trialId: trialId || null,
-      photoId,
-      photographerGuidance: roleGuidance.photographerGuidance,
-      subjectGuidance: roleGuidance.subjectGuidance,
+      ...payload,
+      referenceGuide: undefined,
+      liveObservation: undefined,
     });
     notifySession(sessionId, {
       type: "readyStateUpdated",
-      sessionId,
-      trialId: trialId || null,
-      photoId,
+      ...analysisEventPayload(context, { analysisEndTimestamp }),
       ready: roleGuidance.ready,
     });
 
     res.json(payload);
   } catch (error) {
     console.error("photo analysis failed:", error);
+    const analysisEndTimestamp = Date.now();
+    const failedPayload = analysisEventPayload(context, {
+      analysisEndTimestamp,
+      guideTransform,
+      alignmentError: null,
+      photographerGuidance: [],
+      subjectGuidance: [],
+      ready: {},
+      analysisStatus: "failed",
+      errorReason: error.message || "analysis failed",
+    });
+    notifySession(context.sessionId, {
+      type: "analysisFailed",
+      ...failedPayload,
+    });
+    if (context.trialId) {
+      try {
+        appendTrialEvents(context.sessionId, context.trialId, [{
+          role: "system",
+          eventType: "role_guidance_analysis_failed",
+          payload: failedPayload,
+        }]);
+      } catch (loggingError) {
+        console.error("analysis failure event logging failed:", loggingError);
+      }
+    }
+    error.analysisId = context.analysisId;
     next(error);
   }
 });
 
 app.post("/api/sessions/:sessionId/analyze-frame", upload.single("frame"), (req, res, next) => {
+  let context = null;
   try {
     const sessionId = safeSessionId(req.params.sessionId, "");
     const trialId = safeIdentifier(req.body.trialId);
@@ -1735,29 +2066,50 @@ app.post("/api/sessions/:sessionId/analyze-frame", upload.single("frame"), (req,
     }
 
     const frameId = path.parse(req.file.filename).name;
+    context = {
+      analysisId: `analysis_${randomUUID()}`,
+      sessionId,
+      trialId,
+      photoId: frameId,
+      clientId: safeIdentifier(req.body.clientId),
+      captureSequence: parseOptionalInteger(req.body.captureSequence),
+      captureTimestamp: parseTimestamp(req.body.captureTimestamp),
+      analysisStartTimestamp: Date.now(),
+      guideId,
+    };
+    notifySession(sessionId, {
+      type: "analysisStarted",
+      ...analysisEventPayload(context),
+      analysisStatus: "started",
+    });
     const observationPath = getObservationPath(sessionId, frameId);
     const guidancePath = getRoleGuidancePath(sessionId, frameId);
     runLiveFeaturesExtractor(req.file.path, observationPath, sessionId, trialId, "liveFrame");
     runRoleGuidance(referencePath, observationPath, guidancePath, guideTransform);
 
     const roleGuidance = readJsonFile(guidancePath);
+    const analysisEndTimestamp = Date.now();
     const payload = {
       success: true,
-      sessionId,
-      trialId: trialId || null,
-      guideId: guideId || readJsonFile(referencePath)?.guideId || null,
+      ...analysisEventPayload(context, {
+        analysisEndTimestamp,
+        guideId: guideId || readJsonFile(referencePath)?.guideId || null,
+      }),
       frameId,
+      guideTransform,
       liveObservation: readJsonFile(observationPath),
-      ...roleGuidance,
+      alignmentError: roleGuidance.alignmentError,
+      photographerGuidance: roleGuidance.photographerGuidance || [],
+      subjectGuidance: roleGuidance.subjectGuidance || [],
+      ready: roleGuidance.ready || {},
+      analysisStatus: "completed",
+      errorReason: null,
     };
 
     notifySession(sessionId, {
       type: "roleGuidanceUpdated",
-      sessionId,
-      trialId: trialId || null,
-      frameId,
-      photographerGuidance: roleGuidance.photographerGuidance,
-      subjectGuidance: roleGuidance.subjectGuidance,
+      ...payload,
+      liveObservation: undefined,
     });
     notifySession(sessionId, {
       type: "readyStateUpdated",
@@ -1770,6 +2122,21 @@ app.post("/api/sessions/:sessionId/analyze-frame", upload.single("frame"), (req,
     res.json(payload);
   } catch (error) {
     console.error("frame analysis failed:", error);
+    if (context) {
+      notifySession(context.sessionId, {
+        type: "analysisFailed",
+        ...analysisEventPayload(context, {
+          analysisEndTimestamp: Date.now(),
+          alignmentError: null,
+          photographerGuidance: [],
+          subjectGuidance: [],
+          ready: {},
+          analysisStatus: "failed",
+          errorReason: error.message || "analysis failed",
+        }),
+      });
+      error.analysisId = context.analysisId;
+    }
     next(error);
   }
 });
@@ -1825,6 +2192,7 @@ app.use((error, req, res, next) => {
   res.status(error.statusCode || 400).json({
     success: false,
     error: error.message || "request failed",
+    analysisId: error.analysisId || null,
   });
 });
 
