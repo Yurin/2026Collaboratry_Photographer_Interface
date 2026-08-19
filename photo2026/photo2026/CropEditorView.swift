@@ -119,11 +119,6 @@ struct CropEditorView: View {
                 .frame(width: displayedWidth, height: displayedHeight)
                 .offset(x: horizontalOffset, y: verticalOffset)
 
-            ruleOfThirdsGrid
-
-            Rectangle()
-                .strokeBorder(.white, lineWidth: 3)
-
             VStack {
                 Spacer()
                 Text(String(format: "%.1fx", zoom))
@@ -138,8 +133,16 @@ struct CropEditorView: View {
         // caller, the enlarged image can determine the ZStack's layout size and
         // make the grid/border grow together with the pinch zoom.
         .frame(width: size.width, height: size.height)
-        .contentShape(Rectangle())
         .clipped()
+        .overlay {
+            ruleOfThirdsGrid
+        }
+        .overlay {
+            Rectangle()
+                .strokeBorder(.white, lineWidth: 3)
+                .allowsHitTesting(false)
+        }
+        .contentShape(Rectangle())
         .gesture(dragGesture(canvasSize: size))
         .simultaneousGesture(magnificationGesture)
         .accessibilityLabel("3対4のトリミング範囲")
@@ -151,12 +154,19 @@ struct CropEditorView: View {
             Path { path in
                 let width = geometry.size.width
                 let height = geometry.size.height
-                for fraction in [1.0 / 3.0, 2.0 / 3.0] {
-                    path.move(to: CGPoint(x: width * fraction, y: 0))
-                    path.addLine(to: CGPoint(x: width * fraction, y: height))
-                    path.move(to: CGPoint(x: 0, y: height * fraction))
-                    path.addLine(to: CGPoint(x: width, y: height * fraction))
-                }
+                let firstColumn = width / 3
+                let secondColumn = width * 2 / 3
+                let firstRow = height / 3
+                let secondRow = height * 2 / 3
+
+                path.move(to: CGPoint(x: firstColumn, y: 0))
+                path.addLine(to: CGPoint(x: firstColumn, y: height))
+                path.move(to: CGPoint(x: secondColumn, y: 0))
+                path.addLine(to: CGPoint(x: secondColumn, y: height))
+                path.move(to: CGPoint(x: 0, y: firstRow))
+                path.addLine(to: CGPoint(x: width, y: firstRow))
+                path.move(to: CGPoint(x: 0, y: secondRow))
+                path.addLine(to: CGPoint(x: width, y: secondRow))
             }
             .stroke(.white.opacity(0.45), lineWidth: 1)
         }
