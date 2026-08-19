@@ -5,7 +5,6 @@ import UIKit
 struct MakeGuide: View {
     @StateObject private var store = GuideLibraryStore()
     @Binding var sessionId: String
-    @State private var selectedGuideType: GuideType = .rectangle
 
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
@@ -17,17 +16,11 @@ struct MakeGuide: View {
     @State private var alertMessage: String = ""
 
     @State private var titleText: String = ""
-    @State private var isSaving: Bool = false
     @State private var showSaveAlert: Bool = false
     
     @State private var cropRect: CropRect = .centered
     @State private var cropDragOffset: CGSize = .zero
     
-    @State private var guideHorizontalOffset: Double = 0.0
-    @State private var guideScale: Double = 1.0
-    @State private var guideDragStartOffset: Double = 0.0
-    @State private var guideScaleStart: Double = 1.0
-
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -37,8 +30,7 @@ struct MakeGuide: View {
                     if selectedImage != nil {
                         cropImageSection
                     }
-                    guideTypeSection
-                    previewSection
+                    sessionInfoSection
                     actionSection
                 }
                 .padding(16)
@@ -96,95 +88,6 @@ struct MakeGuide: View {
                     )
             } else {
                 placeholderCard(text: "まだ参照写真が選ばれていません")
-            }
-        }
-    }
-
-    private var previewSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            AppSectionTitle(title: "生成プレビュー", eyebrow: "PREVIEW")
-
-            if let generatedGuideImage = selectedGeneratedGuideImage {
-                GeometryReader { geo in
-                    ZStack {
-                        Color.black.opacity(0.92)
-
-                        if let selectedImage {
-                            Image(uiImage: selectedImage)
-                                .resizable()
-                                .scaledToFill()
-                                .opacity(0.35)
-                                .frame(width: geo.size.width, height: geo.size.height)
-                                .clipped()
-                        }
-
-                        Image(uiImage: generatedGuideImage)
-                            .resizable()
-                            .scaledToFit()
-                            .scaleEffect(guideScale)
-                            .offset(x: guideHorizontalOffset * geo.size.width)
-                            .gesture(
-                                DragGesture()
-                                    .onChanged { value in
-                                        guideHorizontalOffset = constrainedGuideOffset(
-                                            guideDragStartOffset + Double(value.translation.width / geo.size.width)
-                                        )
-                                    }
-                                    .onEnded { _ in
-                                        guideDragStartOffset = guideHorizontalOffset
-                                    }
-                            )
-                            .simultaneousGesture(
-                                MagnificationGesture()
-                                    .onChanged { value in
-                                        guideScale = constrainedGuideScale(guideScaleStart * Double(value))
-                                    }
-                                    .onEnded { _ in
-                                        guideScaleStart = guideScale
-                                    }
-                            )
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(AppStyle.border, lineWidth: 1)
-                    )
-                }
-                .aspectRatio(3.0 / 4.0, contentMode: .fit)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("左右")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        Slider(value: $guideHorizontalOffset, in: -0.35...0.35)
-                            .onChange(of: guideHorizontalOffset) { _, newValue in
-                                guideHorizontalOffset = constrainedGuideOffset(newValue)
-                                guideDragStartOffset = guideHorizontalOffset
-                            }
-                    }
-
-                    HStack {
-                        Text("大きさ")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        Slider(value: $guideScale, in: 0.65...1.5)
-                            .onChange(of: guideScale) { _, newValue in
-                                guideScale = constrainedGuideScale(newValue)
-                                guideScaleStart = guideScale
-                            }
-                    }
-
-                    Button {
-                        resetGuideAdjustment()
-                    } label: {
-                        Image(systemName: "arrow.counterclockwise")
-                    }
-                    .buttonStyle(AppIconButtonStyle())
-                    .accessibilityLabel("ガイド位置をリセット")
-                }
-            } else {
-                placeholderCard(text: "まだガイドが生成されていません")
             }
         }
     }
@@ -300,19 +203,13 @@ struct MakeGuide: View {
         }
     }
 
-    private var guideTypeSection: some View {
+    private var sessionInfoSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AppSectionTitle(title: "ガイド種類", eyebrow: "STYLE")
+            AppSectionTitle(title: "保存内容", eyebrow: "GUIDE SET")
 
-            Picker("ガイド種類", selection: $selectedGuideType) {
-                ForEach(GuideType.allCases) { type in
-                    Text(type.displayName).tag(type)
-                }
-            }
-            .pickerStyle(.menu)
-            .padding(12)
-            .background(AppStyle.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            Text("生成すると、枠・キーポイント・シルエットの3種類をまとめて保存します。")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
 
             HStack {
                 Text("セッションID")
@@ -327,44 +224,18 @@ struct MakeGuide: View {
     }
 
     private var actionSection: some View {
-        HStack(spacing: 10) {
-            Button {
-                generateGuide()
-            } label: {
-                if isGenerating {
-                    ProgressView()
-                } else {
-                    Label("生成", systemImage: "wand.and.stars")
-                        .frame(maxWidth: .infinity)
-                }
+        Button {
+            generateGuide()
+        } label: {
+            if isGenerating {
+                ProgressView()
+            } else {
+                Label("3種類を生成して保存", systemImage: "wand.and.stars")
+                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(AppCompactButtonStyle(filled: selectedImage != nil && !isGenerating))
-            .disabled(selectedImage == nil || isGenerating)
-
-            Button {
-                saveGuide()
-            } label: {
-                if isSaving {
-                    ProgressView()
-                } else {
-                    Label("保存", systemImage: "tray.and.arrow.down")
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .buttonStyle(AppCompactButtonStyle(filled: canSave))
-            .disabled(!canSave || isSaving)
         }
-    }
-
-    private var canSave: Bool {
-        selectedImage != nil && !generatedGuideImages.isEmpty
-    }
-
-    private var selectedGeneratedGuideImage: UIImage? {
-        generatedGuideImages[selectedGuideType]
-            ?? generatedGuideImages[.silhouette]
-            ?? generatedGuideImages[.rectangle]
-            ?? generatedGuideImages[.keypoints]
+        .buttonStyle(AppCompactButtonStyle(filled: selectedImage != nil && !isGenerating))
+        .disabled(selectedImage == nil || isGenerating)
     }
 
     private var displaySessionId: String {
@@ -398,11 +269,15 @@ struct MakeGuide: View {
                     downloadedImages[guideType] = try await downloadImage(from: guideUrl)
                 }
 
+                guard downloadedImages.count == GuideType.allCases.count else {
+                    throw SessionAPIError.invalidResponse
+                }
+
                 await MainActor.run {
                     generatedGuideImages = downloadedImages
                     generatedGuideId = generatedGuideSet.guideId
                     generatedFeaturesUrl = generatedGuideSet.featuresUrl
-                    resetGuideAdjustment()
+                    saveGuide()
                 }
             } catch {
                 await MainActor.run {
@@ -450,7 +325,6 @@ struct MakeGuide: View {
                     self.generatedFeaturesUrl = nil
                     self.cropRect = .centered(for: uiImage.size)
                     self.cropDragOffset = .zero
-                    resetGuideAdjustment()
                 }
             }
         } catch {
@@ -464,26 +338,23 @@ struct MakeGuide: View {
             return
         }
 
-        isSaving = true
-        var adjustedGuideImages: [GuideType: UIImage] = [:]
-        for (guideType, guideImage) in generatedGuideImages {
-            adjustedGuideImages[guideType] = renderAdjustedGuideImage(from: guideImage)
-        }
-
         let finalTitle = titleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "無題のガイド"
             : titleText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        store.addGuide(
+        guard store.addGuide(
             title: finalTitle,
             referenceImage: selectedImage,
-            guideImages: adjustedGuideImages,
+            guideImages: generatedGuideImages,
             guideId: generatedGuideId,
             featuresUrl: generatedFeaturesUrl
-        )
+        ) != nil else {
+            alertMessage = "3種類のガイドを端末に保存できませんでした。"
+            showGenerationErrorAlert = true
+            return
+        }
 
-        isSaving = false
-        alertMessage = "ガイドを保存したよ。ShowGuide に表示されるはず！"
+        alertMessage = "枠・キーポイント・シルエットの3種類を保存しました。"
         showSaveAlert = true
 
         resetForm()
@@ -498,7 +369,6 @@ struct MakeGuide: View {
         titleText = ""
         cropRect = .centered
         cropDragOffset = .zero
-        resetGuideAdjustment()
     }
 
     private func aspectFitFrame(imageSize: CGSize, containerSize: CGSize) -> CGRect {
@@ -572,85 +442,6 @@ struct MakeGuide: View {
         cropDragOffset = .zero
     }
 
-    private func resetGuideAdjustment() {
-        guideHorizontalOffset = 0.0
-        guideScale = 1.0
-        guideDragStartOffset = 0.0
-        guideScaleStart = 1.0
-    }
-
-    private func constrainedGuideOffset(_ value: Double) -> Double {
-        min(0.35, max(-0.35, value))
-    }
-
-    private func constrainedGuideScale(_ value: Double) -> Double {
-        min(1.5, max(0.65, value))
-    }
-
-    private func renderAdjustedGuideImage(from guideImage: UIImage) -> UIImage {
-        let size = guideImage.size
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = guideImage.scale
-        format.opaque = false
-
-        let renderer = UIGraphicsImageRenderer(size: size, format: format)
-        return renderer.image { _ in
-            let scale = CGFloat(guideScale)
-            let horizontalOffset = CGFloat(guideHorizontalOffset)
-            let scaledWidth = size.width * scale
-            let scaledHeight = size.height * scale
-            let originX = (size.width - scaledWidth) / 2 + size.width * horizontalOffset
-            let originY = (size.height - scaledHeight) / 2
-            let rect = CGRect(x: originX, y: originY, width: scaledWidth, height: scaledHeight)
-            guideImage.draw(in: rect)
-        }
-    }
-
-    private func makeGuideOverlayImage(from baseImage: UIImage) -> UIImage {
-        let size = baseImage.size
-        let renderer = UIGraphicsImageRenderer(size: size)
-
-        return renderer.image { context in
-            baseImage.draw(in: CGRect(origin: .zero, size: size))
-
-            let cg = context.cgContext
-
-            cg.setStrokeColor(UIColor.systemBlue.withAlphaComponent(0.9).cgColor)
-            cg.setLineWidth(max(6, size.width * 0.01))
-
-            let marginX = size.width * 0.18
-            let marginY = size.height * 0.12
-            let rect = CGRect(
-                x: marginX,
-                y: marginY,
-                width: size.width - marginX * 2,
-                height: size.height - marginY * 2
-            )
-            cg.stroke(rect)
-
-            cg.setStrokeColor(UIColor.systemPink.withAlphaComponent(0.9).cgColor)
-            cg.setLineWidth(max(4, size.width * 0.008))
-            cg.move(to: CGPoint(x: size.width / 2, y: rect.minY))
-            cg.addLine(to: CGPoint(x: size.width / 2, y: rect.maxY))
-            cg.move(to: CGPoint(x: rect.minX, y: size.height / 2))
-            cg.addLine(to: CGPoint(x: rect.maxX, y: size.height / 2))
-            cg.strokePath()
-
-            cg.setFillColor(UIColor.systemYellow.withAlphaComponent(0.95).cgColor)
-            let center = CGPoint(x: size.width / 2, y: size.height / 2)
-            let circleRect = CGRect(x: center.x - 16, y: center.y - 16, width: 32, height: 32)
-            cg.fillEllipse(in: circleRect)
-
-            let text = "GUIDE"
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.boldSystemFont(ofSize: max(28, size.width * 0.05)),
-                .foregroundColor: UIColor.white,
-                .backgroundColor: UIColor.black.withAlphaComponent(0.45)
-            ]
-            let attributed = NSAttributedString(string: text, attributes: attrs)
-            attributed.draw(at: CGPoint(x: 20, y: 20))
-        }
-    }
 }
 
 #Preview {

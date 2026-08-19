@@ -104,7 +104,7 @@ http://localhost:3000/?sessionId=任意のセッションID
 
 ## 7. 実験モードの利用手順
 
-Phase 1 の実験モードでは、条件A/B/Cの切り替えと試行単位の操作ログ保存ができます。
+現在の実験モードでは、条件A/B/Cの切り替え、試行単位の操作ログ、撮影直後解析、Web/iOS表示時刻、Ready遷移を保存できます。
 
 1. iOS アプリの「実験」タブを開く。
 2. 実験者PINを入力する。開発時の既定値は `2026`。
@@ -124,6 +124,8 @@ Phase 1 の実験モードでは、条件A/B/Cの切り替えと試行単位の�
 
 ReferenceGuideを持つ保存済みガイドを使用している場合は、Webが写真を撮った直後にドラフト保存と撮影後解析を開始します。条件B/Cでは最新の撮影写真に対する撮影者向け構図指示とReady状態をWebへ表示します。条件Cではさらに、`roleGuidanceUpdated`の被写体向け指示とReady状態をiOS撮影画面に表示します。条件Aでは解析を呼びません。条件BではiOSの被写体向け指示を表示しません。通常モードは条件Cと同様に表示します。テンプレートガイド、旧形式など`guideId`を持たないガイドでは、写真は通常どおり保持しつつ解析だけをスキップします。「送信」を押すまではドラフト写真として扱われ、iOSの受信写真には表示されません。低頻度ライブ解析は今後追加します。
 
+撮影ごとに`clientId`、`captureSequence`、`captureTimestamp`を付与し、解析ごとにバックエンドが`analysisId`を発行します。Web/iOSは`captureSequence`が古い解析結果、現在のtrialまたはguideと一致しない結果を表示しません。
+
 実験データは以下へ保存されます。
 
 ```text
@@ -134,6 +136,42 @@ backend/uploads/<sessionId>/experiment/
     └── events.jsonl
 ```
 
+撮影後解析の中間結果は以下へ保存されます。
+
+```text
+backend/uploads/<sessionId>/analysis/
+├── observations/<photoId>.json
+└── role_guidance/<photoId>.json
+```
+
+### 7.1 実験ログの確認
+
+試行イベントは`backend/uploads/<sessionId>/experiment/trials/<trialId>/events.jsonl`へ1行1JSONで追記されます。主なイベントは次のとおりです。
+
+- `photo_captured`
+- `photo_draft_save_started` / `photo_draft_save_completed`
+- `role_guidance_analysis_started`
+- `analysis_started_received`
+- `role_guidance_analyzed` / `role_guidance_analysis_failed`
+- `analysis_completed_received` / `analysis_failed_received`
+- `photographer_guidance_displayed`
+- `subject_guidance_displayed`
+- `ready_state_changed`
+
+計測用時刻はepoch millisecondsです。イベント共通の`clientTimestamp`と`serverTimestamp`はISO 8601です。通常モードでtrialがない場合、Webログはブラウザの`localStorage`に`photoGuideLocalLogs:<sessionId>`として最大1,000件保存され、iOSの被写体向け表示ログはXcodeコンソールへ`ExperimentLog`として出力されます。
+
+ログから次の遅延を計算できます。
+
+```text
+analysisStartTimestamp - captureTimestamp
+analysisEndTimestamp - analysisStartTimestamp
+webGuidanceDisplayTimestamp - captureTimestamp
+subjectGuidanceDisplayTimestamp - captureTimestamp
+subjectGuidanceDisplayTimestamp - analysisEndTimestamp
+```
+
+条件Bでは`subject_guidance_displayed`は記録されません。Ready遷移は初回値を基準として保持し、`false → true`または`true → false`に変化した場合だけ`ready_state_changed`を記録します。
+
 ## 8. 保存データ
 
 backend に送られたファイルは以下に保存されます。
@@ -143,7 +181,9 @@ backend に送られたファイルは以下に保存されます。
 ├── drafts/
 ├── photos/
 ├── references/
-└── guides/
+├── guides/
+├── analysis/
+└── experiment/
 ```
 
 過去バージョンでセッション直下へ保存されたファイルも引き続き読み込めます。受信写真APIは `photos/` と旧形式の撮影写真だけを返し、参照画像・ガイド画像を除外します。

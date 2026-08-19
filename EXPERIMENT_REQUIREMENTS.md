@@ -10,7 +10,13 @@
 
 ### 現在の実装到達点
 
-Phase 1の基盤として、実験セッション作成、条件A/B/C、試行作成・開始・完了・中断、役割別の表示制御、Web・iOSの操作ログ、通信失敗時の一時保存、試行データのJSON/JSONL保存を実装済みである。自動的な構図差分・ポーズ差分の算出と指示生成はPhase 3・4の対象である。
+2026年7月15日時点で、実験セッション作成、条件A/B/C、試行作成・開始・完了・中断、参照特徴抽出・手動補正、撮影直後のRole-Aware Guidance解析、役割別表示、Ready表示、Web・iOSの表示ログ、Ready遷移ログ、試行データのJSON/JSONL保存を実装済みである。
+
+現在の解析は、Webで静止画を撮影した直後にドラフト保存し、その写真を1回解析する方式である。条件B/CではWebへ`photographerGuidance`、条件CではiOSへ`subjectGuidance`を表示する。通常モードは両方を表示し、条件Aでは解析自体を実行しない。
+
+撮影から表示までを追跡するため、撮影ごとに`clientId`、`captureSequence`、`captureTimestamp`、`trialId`、`guideId`、`guideTransform`を保持し、解析ごとにバックエンドで`analysisId`を発行する。解析開始・完了・失敗とWeb/iOS表示時刻は同じ識別子で結合できる。
+
+現時点で対象外または未実装なのは、低頻度ライブ解析、定期フレーム送信による解析、指示のヒステリシス、部位別矢印・関節点ハイライト、アンケート、CSV/JSONエクスポート、条件順序管理である。
 
 ---
 
@@ -76,18 +82,18 @@ Phase 1の基盤として、実験セッション作成、条件A/B/C、試行�
 - 条件を示す名称や説明から、参加者が優劣を推測できないようにする。
 - 条件順序は参加者ペア間でカウンターバランスする。
 - 実験者だけが条件IDを確認でき、参加者画面には原則として `A/B/C` を直接表示しない。
-- すべての条件で同じログ基盤を動かし、非表示条件でも認識精度評価に必要な推定値は、同意範囲内で記録できるようにする。
+- すべての条件で同じ撮影ログ基盤を動かす。現在の条件Aでは解析を実行せず、認識結果も生成しない。
 
 ### 2.2 条件A: ガイドなしの通常撮影
 
 | 項目 | 内容 |
 |---|---|
 | 目的 | 通常の二者撮影を基準条件として測定する |
-| iOS表示 | 参照写真、接続・Ready状態、撮影結果。ライブ映像および自動ポーズ指示は表示しないことを基本とする |
+| iOS表示 | 参照写真、接続状態、撮影結果。Role-Aware Guidanceと解析Readyは表示しない |
 | Web表示 | カメラ映像、撮影、撮影済み写真、送信。構図ガイドと自動指示は表示しない |
 | 使用可能機能 | QR参加、撮影、撮り直し、送信、結果確認 |
 | 使用不可機能 | 自動構図指示、自動ポーズ指示、ガイドオーバーレイ、遠隔ガイド調整 |
-| 主なログ | 開始・終了、撮影時刻、撮影枚数、撮り直し、Ready、共有写真、推定結果、エラー、アンケート |
+| 主なログ | 開始・終了、撮影時刻、ドラフト保存、撮影枚数、削除・共有写真、エラー |
 
 条件Aでも参照写真を双方が事前に確認できるようにする。ただし撮影中に参照写真を常時表示するかは、実験計画で統一し、条件間で同じにする。
 
@@ -100,7 +106,7 @@ Phase 1の基盤として、実験セッション作成、条件A/B/C、試行�
 | Web表示 | カメラ映像、目標人物枠または構図ガイド、方向指示、人物サイズ指示、撮影機能 |
 | 使用可能機能 | 条件Aの機能、撮影者向け構図ガイド、構図指示、ガイドON/OFF |
 | 使用不可機能 | 被写体向け自動ポーズ指示 |
-| 主なログ | 条件Aのログ、構図誤差、構図指示内容・提示時刻、ガイド表示操作、指示後の誤差変化 |
+| 主なログ | 条件Aのログ、解析ID・時刻、構図誤差、撮影者向け指示、Web表示時刻、Ready遷移、失敗理由 |
 
 条件Bでは、撮影者が必要に応じて被写体へ口頭指示を出すことを禁止しない。発話を評価対象にする場合は、実験者の観察記録または別途同意を得た音声記録を利用する。
 
@@ -113,7 +119,7 @@ Phase 1の基盤として、実験セッション作成、条件A/B/C、試行�
 | Web表示 | 条件Bと同じ撮影者向け構図支援。被写体向け詳細指示は表示しない |
 | 使用可能機能 | 条件Bの機能、被写体向けポーズ指示、双方のReady共有、役割別状態同期 |
 | 使用不可機能 | 相手の担当情報を常時詳細表示する機能 |
-| 主なログ | 条件Bのログ、ポーズ誤差、部位別指示、被写体のReady、構図・ポーズの同時収束状態 |
+| 主なログ | 条件Bのログ、被写体向け指示、iOS表示時刻、iOS Ready遷移、構図・ポーズの同時収束状態 |
 
 ### 2.5 条件別表示マトリクス
 
@@ -125,8 +131,8 @@ Phase 1の基盤として、実験セッション作成、条件A/B/C、試行�
 | 撮影者向け構図指示 | － | ○ | ○ |
 | 被写体向けポーズ指示 | － | － | ○ |
 | ガイドON/OFF | － | ○ | ○ |
-| Ready共有 | ○ | ○ | ○ |
-| 認識・差分ログ | ○ | ○ | ○ |
+| Role-Aware Ready表示 | － | Webのみ | Web・iOS |
+| 認識・差分ログ | － | ○ | ○ |
 | 指示提示ログ | 該当なし | 撮影者のみ | 撮影者・被写体 |
 
 ---
@@ -221,6 +227,11 @@ Phase 1の基盤として、実験セッション作成、条件A/B/C、試行�
 | FR-L19 | ログスキーマ版管理 | P1 | Backend | 各記録へ `schemaVersion` とアプリ版を付与する | 開発途中の形式変更を事後判別するため | 異なる版のログを識別し、変換処理を適用できる |
 | FR-L20 | フレーム記録量制御 | P1 | Backend | 全フレーム保存、間引き保存、特徴量のみ保存を実験設定で選べる | 精密分析とプライバシー・容量を両立するため | 設定どおりの保存粒度になり、条件間では同一方針が使われる |
 | FR-L21 | 分析除外フラグ | P1 | Backend | 練習、中断、機器障害、プロトコル逸脱、認識失敗に除外候補と理由を付与する | 恣意的な事後除外を避けるため | 元データを削除せず、除外理由付きで分析対象を抽出できる |
+| FR-L22 | 撮影系列識別 | P0 | Web / Backend | 撮影ごとに`clientId`、単調増加する`captureSequence`、epoch millisecondsの`captureTimestamp`を付与する | 写真名の推測に依存せず撮影順を復元するため | 同一セッション内の撮影を`captureSequence`で一意に整列できる |
+| FR-L23 | 解析識別・時刻 | P0 | Backend | 解析開始時に`analysisId`を発行し、`analysisStartTimestamp`と`analysisEndTimestamp`を記録する | 解析処理時間と撮影後待ち時間を分離するため | 開始・完了・失敗イベントが同じ`analysisId`で結合できる |
+| FR-L24 | Guidance表示記録 | P0 | Web / iOS | Webの`webGuidanceDisplayTimestamp`とiOSの`subjectGuidanceDisplayTimestamp`、実際に表示した指示・Readyを記録する | 生成時刻ではなく参加者が見た時刻を分析するため | 条件BはWebのみ、条件CはWeb/iOS双方の表示ログが残る |
+| FR-L25 | Ready遷移記録 | P0 | Web / iOS | `framingReady`、`poseReady`、`captureReady`の変更前後、時刻、解析ID、撮影系列、写真IDを記録する | Readyの収束・解除を時系列分析するため | boolean値が変化した場合だけ`ready_state_changed`が残る |
+| FR-L26 | 古い解析結果の抑止 | P0 | Web / iOS | `captureSequence`を第一優先、欠落時は`captureTimestamp`を用いて古い結果を無視する | 遅延結果による最新表示の上書きを防ぐため | 古い解析を意図的に遅延させても最新Guidanceが維持される |
 
 ### 3.7 FR-Q: 実験後アンケート・主観評価要件
 
@@ -475,6 +486,14 @@ Phase 1の基盤として、実験セッション作成、条件A/B/C、試行�
 | `shotCount` | integer | trial | 撮影効率 |
 | `retakeCount` | integer | trial | 試行錯誤量 |
 | `captureTimestamps` | timestamp配列 | trial | 行動系列 |
+| `clientId` | UUID相当文字列 | capture / analysis | Web撮影レコードとの結合 |
+| `captureSequence` | 1以上の単調増加整数 | capture / analysis / display | 撮影順序・古い結果判定 |
+| `captureTimestamp` | epoch milliseconds | capture / analysis | Capture-to-display計測の起点 |
+| `analysisId` | `analysis_<UUID>` | analysis / display | 1回の解析を識別 |
+| `analysisStartTimestamp` | epoch milliseconds | analysis | 撮影後から解析開始までの計測 |
+| `analysisEndTimestamp` | epoch milliseconds | analysis | 解析処理時間の計測 |
+| `webGuidanceDisplayTimestamp` | epoch milliseconds | Web display | 撮影者への表示遅延計測 |
+| `subjectGuidanceDisplayTimestamp` | epoch milliseconds | iOS display | 被写体への表示遅延計測 |
 | `guideTransform` | x, y, scale, opacity | event | ガイド操作分析 |
 | `detectedBoundingBox` | x, y, width, height, confidence | inference | 構図差分析 |
 | `detectedKeypoints` | joint, x, y, confidence | inference | ポーズ差分析 |
@@ -513,15 +532,18 @@ Phase 1の基盤として、実験セッション作成、条件A/B/C、試行�
 
 ```text
 uploads/<sessionId>/
-  session.json
-  trials/<trialId>/
-    trial.json
-    events.jsonl
-    inference.jsonl
-    photos/
-    guides/
-    reference/
-    questionnaire/
+  drafts/
+  photos/
+  references/
+  guides/
+  analysis/
+    observations/<photoId>.json
+    role_guidance/<photoId>.json
+  experiment/
+    session.json
+    trials/<trialId>/
+      trial.json
+      events.jsonl
 ```
 
 同時書込み、検索、データ件数が増える場合は、メタデータとイベントをSQLiteまたは研究用データベースへ移し、画像だけをファイル保存してもよい。
@@ -532,7 +554,10 @@ uploads/<sessionId>/
 - 高頻度推定ログと利用者操作ログを分離する。
 - 撮影時点の前後にある推定値を特定できるようにする。
 - 指示を生成しただけの時刻と、実際に画面表示した時刻を区別する。
-- 非表示条件Aでも認識結果を裏側で記録する場合は、同意説明に含める。
+- 計測用時刻はepoch millisecondsで保存し、イベント共通の`clientTimestamp`と`serverTimestamp`はISO 8601を維持する。
+- 条件AではRole-Aware Guidance解析を実行せず、撮影・ドラフト保存・送信に関するログのみ記録する。
+- 条件BではiOSが`roleGuidanceUpdated`を受信しても`subjectGuidance`を表示せず、被写体向け表示ログも生成しない。
+- HTTP応答とWebSocketで同じ解析結果を受けた場合、`analysisId`で表示ログを重複排除する。
 - 欠損値を0や空配列で代替せず、`null` と欠損理由を保存する。
 - 再送による重複は `eventId` で排除する。
 - 実験者による訂正は上書きせず、変更履歴を残す。
@@ -558,7 +583,7 @@ uploads/<sessionId>/
 
 既存の写真、ガイド、セッションAPIは可能な限り流用する。実験メタデータとログは責務が異なるため、既存APIへ多数の任意項目を追加するのではなく、最小限の実験用エンドポイントを追加する。
 
-### 7.2 推奨HTTP API
+### 7.2 現在のHTTP API
 
 | Method | Path案 | 優先度 | 用途 | 既存APIとの関係 |
 |---|---|:---:|---|---|
@@ -569,38 +594,79 @@ uploads/<sessionId>/
 | POST | `/api/experiments/trials/:trialId/start` | P0 | 開始時刻と状態を確定 | 汎用状態更新APIへの統合も可 |
 | POST | `/api/experiments/trials/:trialId/end` | P0 | 完了・中断、必要に応じて任意の最終写真IDを記録 | 汎用状態更新APIへの統合も可 |
 | POST | `/api/experiments/trials/:trialId/events` | P0 | 操作・指示・Readyログを一括保存 | 複数イベントのバッチ受付を推奨 |
-| POST | `/api/experiments/trials/:trialId/inference` | P1 | 高頻度認識結果を保存 | eventsへ統合可能だが分離を推奨 |
-| POST | `/api/experiments/questionnaires` | P0 | 条件別・総括アンケート保存 | 新規 |
-| PUT | `/api/references/:referenceImageId/pose` | P0 | 参照特徴と手動補正版を保存 | 既存ガイド生成APIの結果を利用 |
-| GET | `/api/references/:referenceImageId/pose` | P0 | 採用中の参照姿勢を取得 | 新規 |
-| GET | `/api/experiments/export` | P1 | 条件・試行を指定して分析データ出力 | 実験者のみ利用 |
+| POST | `/api/sessions/:sessionId/draft-photos` | P0 | 撮影直後の写真と撮影メタデータをドラフト保存 | iOSにはまだ共有しない |
+| DELETE | `/api/sessions/:sessionId/draft-photos/:photoId` | P0 | 未共有ドラフトを削除 | Webの個別削除・一括クリアで利用 |
+| POST | `/api/sessions/:sessionId/photos/:photoId/analyze` | P0 | `analysisId`を発行しRole-Aware Guidanceを生成 | 条件B/C・通常モードで利用 |
+| POST | `/api/sessions/:sessionId/photos/share` | P0 | 選択中ドラフトを正式写真へ昇格 | 昇格時にiOSへ写真更新通知 |
+| GET | `/api/experiments/trials/:trialId/events` | P0 | 保存済み実験イベント取得 | `events.jsonl`を返す |
 
-写真アップロード時には、既存 `POST /api/photos` へ `trialId`、`captureTimestamp` を追加する拡張を優先し、重複する写真APIは作らない。現時点では撮影者が撮影済み写真を全件送信するため、`isFinalCandidate` や最終写真選択は必須にしない。
+`POST /api/sessions/:sessionId/draft-photos`には`clientId`、`captureSequence`、`captureTimestamp`、`trialId`、`guideId`、`guideTransform`を送る。解析APIにも同じ撮影メタデータを渡し、解析結果と表示ログまで伝播させる。アンケート、高頻度推定保存、分析用エクスポートは未実装である。
 
-### 7.3 WebSocket通知
+### 7.3 現在のWebSocket通知
 
-既存 `/ws/session` を拡張し、役割をクエリまたは接続直後の登録メッセージで指定する。
+既存`/ws/session`は同じ`sessionId`のwatcherへ通知を配信する。条件ごとの表示可否はWeb/iOSクライアントでも検証する。条件BのiOSは`roleGuidanceUpdated`を受信しても被写体向け表示を行わない。
 
-| 通知種別案 | 方向 | 内容 |
+| 通知種別 | 方向 | 内容 |
 |---|---|---|
 | `experiment-configured` | Backend → 両端末 | 条件、試行、参照写真、支援Level |
 | `trial-state-changed` | Backend → 両端末 | 試行状態と時刻 |
-| `composition-instruction` | Backend → Web | 撮影者向け構図指示 |
-| `pose-instruction` | Backend → iOS | 被写体向けポーズ指示 |
-| `readiness-changed` | 双方向 | 役割別Readyと統合Ready |
-| `capture-completed` | Web → Backend → iOS | 撮影時刻、写真ID |
-| `photos-sent` | Backend → iOS | 送信完了、写真一覧 |
-| `inference-status` | Backend → 対象端末 | 検出中、低信頼度、Level低下 |
-| `log-sync-status` | Backend → 対象端末 | 受領済みsequence、再送要求 |
+| `analysisStarted` | Backend → Web / iOS | 解析ID、撮影ID群、解析開始時刻 |
+| `roleGuidanceUpdated` | Backend → Web / iOS | 完了した解析結果、役割別Guidance、Ready、解析時刻 |
+| `analysisFailed` | Backend → Web / iOS | 失敗した解析ID、撮影ID群、`errorReason` |
+| `readyStateUpdated` | Backend → Web / iOS | 現在のReady状態。互換用通知 |
+| `photos-updated` | Backend → iOS | ドラフトが正式写真へ昇格した後の写真一覧更新 |
+
+`roleGuidanceUpdated`は少なくとも次のフィールドを含む。
+
+```json
+{
+  "type": "roleGuidanceUpdated",
+  "analysisId": "analysis_001",
+  "sessionId": "session_001",
+  "trialId": "trial_001",
+  "photoId": "draft_001.jpg",
+  "clientId": "client_001",
+  "captureSequence": 3,
+  "captureTimestamp": 1780000000000,
+  "analysisStartTimestamp": 1780000000100,
+  "analysisEndTimestamp": 1780000000400,
+  "guideId": "guide_001",
+  "guideTransform": {
+    "translationX": 0,
+    "translationY": 0,
+    "scale": 1
+  },
+  "alignmentError": {},
+  "photographerGuidance": [],
+  "subjectGuidance": [],
+  "ready": {
+    "framingReady": false,
+    "poseReady": false,
+    "captureReady": false
+  },
+  "analysisStatus": "completed",
+  "errorReason": null
+}
+```
 
 ### 7.4 通信要件
 
-- 役割別イベントはサーバーで配送先を制御し、クライアント側の非表示だけに依存しない。
-- イベントには `sessionId`、`trialId`、`conditionId`、`eventId`、サーバー時刻を含める。
-- 古い試行の遅延イベントは現在画面へ反映しない。
+- 現在はセッション単位配信とクライアント側の条件判定を併用する。将来はサーバー側でも役割別配送を強制する。
+- 解析状態イベントには`analysisId`、`photoId`、`clientId`、`captureSequence`、`captureTimestamp`、`trialId`、`guideId`を含める。
+- 古い試行・古い`captureSequence`の遅延イベントは現在画面へ反映しない。
 - 再接続時は最後に受領したsequence以降を再送するか、最新状態のスナップショットを返す。
 - 条件Aでは支援イベントをクライアントへ送らない、または表示不能な明示設定にする。
 - ログ送信とリアルタイム支援を分離し、ログ保存遅延によって撮影支援を停止させない。
+
+### 7.5 Capture-to-display算出
+
+現在のログから次の遅延を計算できる。
+
+- 撮影後解析開始待ち: `analysisStartTimestamp - captureTimestamp`
+- 解析処理時間: `analysisEndTimestamp - analysisStartTimestamp`
+- Web表示遅延: `webGuidanceDisplayTimestamp - captureTimestamp`
+- iOS表示遅延: `subjectGuidanceDisplayTimestamp - captureTimestamp`
+- 解析完了後iOS表示遅延: `subjectGuidanceDisplayTimestamp - analysisEndTimestamp`
 
 ---
 
@@ -658,6 +724,9 @@ uploads/<sessionId>/
 ### 9.4 データ完全性
 
 - 撮影結果、共有写真群、認識結果、指示、Ready、アンケートが `sessionId` と `trialId` で紐付く。
+- 条件B/Cの解析について、`analysisId`、`clientId`、`captureSequence`、`captureTimestamp`、解析開始・終了時刻が欠けずに記録される。
+- Web/iOSの表示ログが実際に表示したGuidanceとReadyを含み、同じ`analysisId`の解析結果へ結合できる。
+- 古い`captureSequence`の結果が遅れて到着しても、最新表示と表示ログを上書きしない。
 - 必須識別子、開始・終了時刻、撮影枚数、撮影時刻、共有写真ID群が完了試行または送信イベントに存在する。
 - 条件別に試行時間、撮影枚数、構図誤差、ポーズ誤差、主観評価を比較できる形式で出力できる。
 - ログ送信中に一時切断しても、復帰後に必須イベントが重複なく保存される。
@@ -682,10 +751,13 @@ uploads/<sessionId>/
 
 ## 10. 優先度付きロードマップ
 
+現在はPhase 1・2の主要基盤と、Phase 3・4の「撮影直後静止画解析による最小構成」まで実装済みである。ライブ解析、指示安定化、アンケート、エクスポート、実機パイロットは未完了である。
+
 ### Phase 0: 既存機能の安定化
 
 | 項目 | 内容 |
 |---|---|
+| 状況 | 主要機能は実装済み。実機連続試験は未完了 |
 | 実装内容 | 撮影済みサムネイル表示、写真・参照・ガイドの保存先分離、固定IP設定改善、エラー復帰、実機結合試験 |
 | 完了条件 | iOSとWebの実機2台で、ガイド作成、QR参加、ライブ共有、撮影、送信、保存を連続して完了できる |
 | 研究上の意味 | 実験条件とは無関係な不具合を減らし、操作失敗を支援効果と誤認しない基盤を作る |
@@ -694,6 +766,7 @@ uploads/<sessionId>/
 
 | 項目 | 内容 |
 |---|---|
+| 状況 | 条件・trial・イベントログ・写真紐付け・表示時刻ログは実装済み。アンケートは未実装 |
 | 実装内容 | 実験セッション、条件A/B/C、trial状態、役割登録、Ready、イベントログ、写真紐付け、アンケート最小版 |
 | 完了条件 | 支援内容が仮表示でも、3条件を切り替えて全イベントをsession/trial単位で出力できる |
 | 研究上の意味 | 条件操作と従属変数測定を先に固定し、後続の支援機能を比較可能にする |
@@ -702,6 +775,7 @@ uploads/<sessionId>/
 
 | 項目 | 内容 |
 |---|---|
+| 状況 | 参照特徴抽出、手動補正、バージョン保存を実装済み。実験用参照写真の人手検証は未完了 |
 | 実装内容 | 参照人物枠・シルエット・関節点抽出、正規化、左右対応、手動補正、バージョン保存 |
 | 完了条件 | 実験で使う全参照写真について、一人人物・必要Levelの目標姿勢を人手確認済みで保存できる |
 | 研究上の意味 | モデル誤差を実験刺激の誤差として残さず、同一の目標を全参加者へ提示する |
@@ -710,6 +784,7 @@ uploads/<sessionId>/
 
 | 項目 | 内容 |
 |---|---|
+| 状況 | 撮影直後静止画の構図差・定型指示・Web表示・Ready・表示ログを実装済み。ライブ解析と安定化は未実装 |
 | 実装内容 | ライブ人物枠、中心・サイズ差、目標枠、上下左右、近づく・離れる、指示安定化、構図Ready |
 | 完了条件 | 既知のずれに対して正しい指示を表示し、条件AとBを比較可能な状態でパイロット試行できる |
 | 研究上の意味 | 撮影者支援単独の効果を測り、条件Cの追加効果を解釈する基準を作る |
@@ -718,6 +793,7 @@ uploads/<sessionId>/
 
 | 項目 | 内容 |
 |---|---|
+| 状況 | 撮影直後静止画の被写体向け指示・iOS表示・Ready・表示ログを実装済み。ライブ解析と部位別視覚支援は未実装 |
 | 実装内容 | Level 1、主要点Level 2、部位別ルール、ポーズReady、低信頼度フォールバック、役割別配送 |
 | 完了条件 | 条件Cで被写体だけに主要点の正しい方向指示が表示され、BとCの差を測定できる |
 | 研究上の意味 | 二端末へ役割別に情報を分配する本研究の中心仮説を検証可能にする |
@@ -732,12 +808,12 @@ uploads/<sessionId>/
 
 ### 推奨する実装順
 
-1. P0の実験状態・ログ・写真紐付け
-2. Level 1の構図支援
-3. 参照関節点の手動補正
-4. Level 2の被写体支援
-5. 条件A/B/Cのパイロット
-6. 必要性が確認できた場合のみLevel 3、傾き、LLM言い換えを追加
+1. 実機2台で条件A/B/Cを各2試行以上実施し、画面表示と`events.jsonl`を照合する
+2. 端末時計差の測定または補正情報を追加し、Capture-to-display値を検証する
+3. iOS表示ログの専用受信APIまたはサーバー受信時刻を追加する
+4. アンケートと分析除外理由の記録を実装する
+5. 条件順序管理と分析用エクスポートを実装する
+6. パイロット結果から必要性が確認できた場合のみライブ解析、安定化、高度な視覚支援を追加する
 
 ---
 
@@ -759,5 +835,10 @@ uploads/<sessionId>/
 - クラウド規模の同時多数セッション運用
 - Level 3の全関節支援を本実験の必須条件にすること
 - LLMが指示内容やReady判定を決定すること
+- 低頻度ライブ解析とWebからの定期解析フレーム送信
+- 指示のちらつき防止とヒステリシス
+- 指示文の高度な具体化、部位別矢印、関節点ハイライト
+- ドラフト写真専用TTL削除
+- アンケート、CSV/JSONエクスポート、条件順序管理
 
 これらは、二者へ役割別支援を提示することの効果を検証する中心課題を不必要に広げ、実験結果の解釈を難しくするため、本研究の基本実験から除外する。

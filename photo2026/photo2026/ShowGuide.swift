@@ -227,6 +227,14 @@ private struct GuideDetailView: View {
     let onToggleSelection: () -> Void
 
     @State private var showGuideImageFullscreen = false
+    @State private var selectedGuideType: GuideType
+
+    init(guide: GuideItem, isSelected: Bool, onToggleSelection: @escaping () -> Void) {
+        self.guide = guide
+        self.isSelected = isSelected
+        self.onToggleSelection = onToggleSelection
+        _selectedGuideType = State(initialValue: guide.libraryGuideTypes.first ?? .silhouette)
+    }
 
     var body: some View {
         ScrollView {
@@ -258,16 +266,34 @@ private struct GuideDetailView: View {
                         .font(.subheadline)
                     }
 
-                    if let guideImage = guide.guideUIImage {
-                        Button {
-                            showGuideImageFullscreen = true
-                        } label: {
-                            Image(uiImage: guideImage)
-                                .resizable()
-                                .scaledToFit()
-                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                    if !guide.libraryGuideTypes.isEmpty {
+                        TabView(selection: $selectedGuideType) {
+                            ForEach(guide.libraryGuideTypes) { guideType in
+                                VStack(spacing: 8) {
+                                    Text(guideType.displayName)
+                                        .font(.subheadline.weight(.semibold))
+
+                                    if let guideImage = guide.guideUIImage(for: guideType) {
+                                        Button {
+                                            showGuideImageFullscreen = true
+                                        } label: {
+                                            Image(uiImage: guideImage)
+                                                .resizable()
+                                                .scaledToFit()
+                                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.bottom, 28)
+                                .tag(guideType)
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .frame(height: 430)
+                        .tabViewStyle(.page(indexDisplayMode: .always))
+                        .background(Color.black.opacity(0.92))
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
                     } else {
                         missingImageView(text: "ガイド画像が見つかりません")
                     }
@@ -297,7 +323,10 @@ private struct GuideDetailView: View {
         .navigationTitle("ガイド詳細")
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(isPresented: $showGuideImageFullscreen) {
-            FullscreenGuideView(guide: guide)
+            FullscreenGuideView(
+                guide: guide,
+                initialGuideType: selectedGuideType
+            )
         }
     }
 
@@ -327,16 +356,37 @@ private struct GuideDetailView: View {
 private struct FullscreenGuideView: View {
     let guide: GuideItem
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedGuideType: GuideType
+
+    init(guide: GuideItem, initialGuideType: GuideType) {
+        self.guide = guide
+        _selectedGuideType = State(initialValue: initialGuideType)
+    }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
 
-            if let image = guide.guideUIImage {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .padding()
+            if !guide.libraryGuideTypes.isEmpty {
+                TabView(selection: $selectedGuideType) {
+                    ForEach(guide.libraryGuideTypes) { guideType in
+                        VStack(spacing: 12) {
+                            Text(guideType.displayName)
+                                .font(.headline)
+                                .foregroundStyle(.white)
+
+                            if let image = guide.guideUIImage(for: guideType) {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFit()
+                            }
+                        }
+                        .padding()
+                        .padding(.bottom, 28)
+                        .tag(guideType)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .always))
             } else {
                 Text("ガイド画像が見つかりません")
                     .foregroundStyle(.white)
@@ -402,6 +452,27 @@ private struct GuideCardView: View {
                 .padding(12)
                 .shadow(radius: 2)
         }
+    }
+}
+
+private extension GuideItem {
+    var libraryGuideTypes: [GuideType] {
+        let orderedTypes: [GuideType] = [.silhouette, .rectangle, .keypoints]
+        let availableTypes = orderedTypes.filter { guideType in
+            switch guideType {
+            case .rectangle:
+                return rectangleGuideImagePath != nil
+            case .keypoints:
+                return keypointsGuideImagePath != nil
+            case .silhouette:
+                return silhouetteGuideImagePath != nil
+            }
+        }
+
+        if !availableTypes.isEmpty {
+            return availableTypes
+        }
+        return guideUIImage == nil ? [] : [.silhouette]
     }
 }
 
