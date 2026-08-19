@@ -11,6 +11,7 @@ struct CropEditorView: View {
     @State private var zoom: Double
     @State private var dragStartCenter: CGPoint?
     @State private var magnificationStartZoom: Double?
+    @State private var magnificationStartCenter: CGPoint?
 
     private let baseCrop: CropRect
     private let minimumZoom = 1.0
@@ -176,6 +177,8 @@ struct CropEditorView: View {
     private func dragGesture(canvasSize: CGSize) -> some Gesture {
         DragGesture()
             .onChanged { value in
+                guard magnificationStartZoom == nil else { return }
+
                 if dragStartCenter == nil {
                     dragStartCenter = CGPoint(x: centerX, y: centerY)
                 }
@@ -201,14 +204,20 @@ struct CropEditorView: View {
             .onChanged { value in
                 if magnificationStartZoom == nil {
                     magnificationStartZoom = zoom
+                    magnificationStartCenter = CGPoint(x: centerX, y: centerY)
+                    dragStartCenter = nil
                 }
-                guard let startZoom = magnificationStartZoom else { return }
+                guard let startZoom = magnificationStartZoom,
+                      let startCenter = magnificationStartCenter else { return }
 
                 zoom = min(maximumZoom, max(minimumZoom, startZoom * Double(value)))
-                clampCurrentCenter()
+                centerX = Self.clampCenter(startCenter.x, extent: baseCrop.width / zoom)
+                centerY = Self.clampCenter(startCenter.y, extent: baseCrop.height / zoom)
             }
             .onEnded { _ in
                 magnificationStartZoom = nil
+                magnificationStartCenter = nil
+                dragStartCenter = nil
             }
     }
 
@@ -229,11 +238,7 @@ struct CropEditorView: View {
         centerY = 0.5
         dragStartCenter = nil
         magnificationStartZoom = nil
-    }
-
-    private func clampCurrentCenter() {
-        centerX = Self.clampCenter(centerX, extent: baseCrop.width / zoom)
-        centerY = Self.clampCenter(centerY, extent: baseCrop.height / zoom)
+        magnificationStartCenter = nil
     }
 
     private func fittedCropFrame(in availableSize: CGSize) -> CGSize {

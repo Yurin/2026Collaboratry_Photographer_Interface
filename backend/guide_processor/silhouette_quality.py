@@ -107,7 +107,10 @@ def validate_person_mask(raw_mask, processed_mask, detection_box, pose_keypoints
             (touches["left"] and touches["right"])
             or (touches["top"] and touches["bottom"])
         )
-        if opposing_edges or sum(touches.values()) >= 3:
+        touches_horizontal_edge = touches["left"] or touches["right"]
+        if touches_horizontal_edge:
+            reasons.append("人物がトリミング範囲の左右からはみ出しています")
+        elif opposing_edges or sum(touches.values()) >= 3:
             reasons.append("人物がトリミング範囲からはみ出しています")
 
     if pose_keypoints:

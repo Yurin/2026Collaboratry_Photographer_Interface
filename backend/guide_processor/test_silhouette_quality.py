@@ -38,6 +38,31 @@ class SilhouetteQualityTests(unittest.TestCase):
         with self.assertRaises(MaskQualityError):
             validate_person_mask(mask_image(raw), processed, (10, 20, 140, 195))
 
+    def test_rejects_mask_touching_either_horizontal_edge(self):
+        cases = (
+            (slice(25, 185), slice(0, 70), (0, 23, 72, 187)),
+            (slice(25, 185), slice(80, 150), (78, 23, 150, 187)),
+        )
+
+        for rows, columns, detection_box in cases:
+            with self.subTest(columns=columns):
+                raw = np.zeros((200, 150), dtype=np.uint8)
+                raw[rows, columns] = 1
+                image = mask_image(raw)
+
+                with self.assertRaisesRegex(
+                    MaskQualityError,
+                    "左右からはみ出しています",
+                ):
+                    validate_person_mask(image, image, detection_box)
+
+    def test_accepts_mask_touching_only_bottom_edge(self):
+        raw = np.zeros((200, 150), dtype=np.uint8)
+        raw[40:200, 40:110] = 1
+        image = mask_image(raw)
+
+        validate_person_mask(image, image, (38, 38, 112, 200))
+
 
 if __name__ == "__main__":
     unittest.main()
