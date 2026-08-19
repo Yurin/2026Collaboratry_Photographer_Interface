@@ -13,7 +13,7 @@ class MaskQualityError(RuntimeError):
 
     def __str__(self):
         detail = "、".join(self.reasons)
-        return f"シルエットを正しく抽出できませんでした（{detail}）。人物全体が写るようにトリミングを調整してください。"
+        return f"シルエットを正しく抽出できませんでした（{detail}）。頭部と主要な人物領域が見えるようにトリミングを調整してください。"
 
 
 def _odd_kernel_size(image_size, ratio=0.003):
@@ -66,7 +66,95 @@ def _mask_box(binary):
     return (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
 
 
-def validate_person_mask(raw_mask, processed_mask, detection_box, pose_keypoints=None):
+def _visible_points(pose_keypoints, indices, confidence=0.30):
+    if not pose_keypoints:
+        return []
+    return [
+        pose_keypoints[index]
+        for index in indices
+        if index < len(pose_keypoints) and pose_keypoints[index][2] >= confidence
+    ]
+
+
+def classify_pose_frame(pose_keypoints, image_size=None):
+    """Classify visible anatomy so hidden hands/legs are not treated as mask failures."""
+    if not pose_keypoints:
+        return "unknown"
+
+    face = _visible_points(pose_keypoints, (0, 1, 2, 3, 4))
+    shoulders = _visible_points(pose_keypoints, (5, 6))
+    hips = _visible_points(pose_keypoints, (11, 12))
+    knees = _visible_points(pose_keypoints, (13, 14))
+    ankles = _visible_points(pose_keypoints, (15, 16))
+
+    if hips and knees:
+        if not ankles:
+            return "seated"
+        shoulder_y = sum(point[1] for point in shoulders) / len(shoulders) if shoulders else None
+        hip_y = sum(point[1] for point in hips) / len(hips)
+        knee_y = sum(point[1] for point in knees) / len(knees)
+        if shoulder_y is not None:
+            torso_height = max(1.0, hip_y - shoulder_y)
+            if knee_y - hip_y < torso_height * 0.70:
+                return "seated"
+        return "full_body"
+
+    if face and shoulders:
+        return "upper_body"
+    return "unknown"
+
+
+def _point_inside_mask(binary, point, radius):
+    height, width = binary.shape
+    x, y, _ = point
+    px = int(round(x))
+    py = int(round(y))
+    x1, x2 = max(0, px - radius), min(width, px + radius + 1)
+    y1, y2 = max(0, py - radius), min(height, py + radius + 1)
+    return x1 < x2 and y1 < y2 and binary[y1:y2, x1:x2].any()
+
+
+def _head_quality_reasons(processed, actual_box, detection_box, pose_keypoints):
+    if actual_box is None or not pose_keypoints:
+        return []
+
+    reasons = []
+    height, _ = processed.shape
+    radius = max(3, int(round(min(processed.shape) * 0.01)))
+    face = _visible_points(pose_keypoints, (0, 1, 2, 3, 4), confidence=0.25)
+    if len(face) >= 2:
+        outside = sum(not _point_inside_mask(processed, point, radius) for point in face)
+        if outside / len(face) > 0.40:
+            reasons.append("頭部の輪郭と顔の位置が一致していません")
+
+        mask_top = actual_box[1]
+        face_top = min(point[1] for point in face)
+        face_width = max(point[0] for point in face) - min(point[0] for point in face)
+        shoulders = _visible_points(pose_keypoints, (5, 6), confidence=0.25)
+        shoulder_width = (
+            abs(shoulders[0][0] - shoulders[1][0]) if len(shoulders) == 2 else 0.0
+        )
+        required_clearance = max(height * 0.012, face_width * 0.30, shoulder_width * 0.08)
+        if face_top - mask_top < required_clearance:
+            reasons.append("頭頂部の輪郭が不足しています")
+
+    mask_top = actual_box[1]
+    mask_width = max(1, actual_box[2] - actual_box[0])
+    detection_top = detection_box[1]
+    if abs(mask_top - detection_top) <= 2:
+        top_row_width = int(processed[mask_top].sum())
+        if top_row_width / mask_width >= 0.25:
+            reasons.append("頭頂部が人物検出枠で切れています")
+    return reasons
+
+
+def validate_person_mask(
+    raw_mask,
+    processed_mask,
+    detection_box,
+    pose_keypoints=None,
+    pose_frame=None,
+):
     """Raise a user-facing error when a detected mask is unsafe to use as a guide."""
     raw = np.asarray(raw_mask.convert("L")) >= 128
     processed = np.asarray(processed_mask.convert("L")) >= 128
@@ -113,24 +201,31 @@ def validate_person_mask(raw_mask, processed_mask, detection_box, pose_keypoints
         elif opposing_edges or sum(touches.values()) >= 3:
             reasons.append("人物がトリミング範囲からはみ出しています")
 
+    reasons.extend(
+        _head_quality_reasons(processed, actual_box, detection_box, pose_keypoints)
+    )
+
     if pose_keypoints:
         radius = max(3, int(round(min(processed_mask.size) * 0.01)))
-        important_indices = (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+        frame = pose_frame or classify_pose_frame(pose_keypoints, processed_mask.size)
+        important_by_frame = {
+            "full_body": tuple(range(17)),
+            "seated": (0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 14),
+            "upper_body": (0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 12),
+            "unknown": (0, 1, 2, 3, 4, 5, 6, 11, 12),
+        }
+        important_indices = important_by_frame[frame]
         checked = 0
         outside = 0
-        height, width = processed.shape
         for index in important_indices:
             if index >= len(pose_keypoints):
                 continue
-            x, y, confidence = pose_keypoints[index]
+            point = pose_keypoints[index]
+            _, _, confidence = point
             if confidence < 0.35:
                 continue
             checked += 1
-            px = int(round(x))
-            py = int(round(y))
-            x1, x2 = max(0, px - radius), min(width, px + radius + 1)
-            y1, y2 = max(0, py - radius), min(height, py + radius + 1)
-            if x1 >= x2 or y1 >= y2 or not processed[y1:y2, x1:x2].any():
+            if not _point_inside_mask(processed, point, radius):
                 outside += 1
         if checked >= 4 and outside / checked > 0.30:
             reasons.append("輪郭と主要関節の位置が一致していません")

@@ -16,7 +16,13 @@ except Exception:
     YOLO = None
     np = None
 
+try:
+    from ultralytics import SAM
+except Exception:
+    SAM = None
+
 _models = {}
+_sam_models = {}
 
 
 def load_model(weights: str | None = None, task: str = "detect"):
@@ -156,7 +162,7 @@ def detect_person_bbox(image, conf_threshold: float = 0.3) -> Optional[Tuple[int
     return _box_tuple(boxes, best_index)
 
 
-def detect_person_mask(image, conf_threshold: float = 0.3):
+def detect_person_mask(image, conf_threshold: float = 0.3, mask_threshold: float = 0.5):
     """Return a PIL L mask and bbox for the most prominent segmented person."""
     if np is None or YOLO is None or Image is None:
         raise RuntimeError("Required libraries for person segmentation are not installed")
@@ -186,11 +192,135 @@ def detect_person_mask(image, conf_threshold: float = 0.3):
     except Exception:
         mask_array = masks.data[best_index].numpy()
 
-    mask = Image.fromarray((mask_array > 0.5).astype("uint8") * 255, mode="L")
+    mask = Image.fromarray((mask_array > mask_threshold).astype("uint8") * 255, mode="L")
     if mask.size != image.size:
         mask = mask.resize(image.size, resample=Image.NEAREST)
 
     return mask, _box_tuple(boxes, best_index)
+
+
+def expand_person_box(box, image_size, horizontal_ratio=0.12, top_ratio=0.30, bottom_ratio=0.08):
+    """Expand a person box while keeping it within the image."""
+    width, height = image_size
+    left, top, right, bottom = box
+    box_width = max(1, right - left)
+    box_height = max(1, bottom - top)
+    return (
+        max(0, int(round(left - box_width * horizontal_ratio))),
+        max(0, int(round(top - box_height * top_ratio))),
+        min(width, int(round(right + box_width * horizontal_ratio))),
+        min(height, int(round(bottom + box_height * bottom_ratio))),
+    )
+
+
+def detect_person_mask_in_expanded_region(
+    image,
+    person_box,
+    conf_threshold: float = 0.2,
+    mask_threshold: float = 0.4,
+):
+    """Retry segmentation on a padded person crop and map the result to the full image."""
+    if Image is None:
+        raise RuntimeError("Pillow is not installed")
+
+    region_box = expand_person_box(person_box, image.size)
+    region = image.crop(region_box)
+    region_mask, region_detection_box = detect_person_mask(
+        region,
+        conf_threshold=conf_threshold,
+        mask_threshold=mask_threshold,
+    )
+    if region_mask is None or region_detection_box is None:
+        return None, None
+
+    full_mask = Image.new("L", image.size, 0)
+    full_mask.paste(region_mask, (region_box[0], region_box[1]))
+    return full_mask, (
+        region_box[0] + region_detection_box[0],
+        region_box[1] + region_detection_box[1],
+        region_box[0] + region_detection_box[2],
+        region_box[1] + region_detection_box[3],
+    )
+
+
+def _load_sam_model():
+    if SAM is None:
+        raise RuntimeError("Ultralytics SAM is not available")
+
+    weights = os.environ.get("SAM_WEIGHTS", "mobile_sam.pt")
+    if weights not in _sam_models:
+        _sam_models[weights] = SAM(weights)
+    return _sam_models[weights]
+
+
+def _mask_box(mask):
+    binary = np.asarray(mask.convert("L")) > 0
+    ys, xs = np.nonzero(binary)
+    if len(xs) == 0:
+        return None
+    return (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+
+
+def _sam_prompt_points(image_size, pose_keypoints, person_box=None):
+    width, height = image_size
+    positive_indices = (0, 1, 2, 5, 6, 11, 12)
+    positive = [
+        [float(pose_keypoints[index][0]), float(pose_keypoints[index][1])]
+        for index in positive_indices
+        if pose_keypoints
+        and index < len(pose_keypoints)
+        and pose_keypoints[index][2] >= 0.30
+    ]
+    if not positive:
+        return None, None
+
+    person_center = (
+        (person_box[0] + person_box[2]) / 2 if person_box is not None else width / 2
+    )
+    background_x = width * (0.97 if person_center <= width / 2 else 0.03)
+    negative = [[background_x, height * 0.03], [background_x, height * 0.50]]
+    points = [positive + negative]
+    labels = [[1] * len(positive) + [0] * len(negative)]
+    return points, labels
+
+
+def detect_person_mask_with_sam(image, person_box, pose_keypoints=None):
+    """Refine a difficult person silhouette using an expanded box prompt."""
+    if np is None or Image is None:
+        raise RuntimeError("Required libraries for SAM segmentation are not installed")
+
+    model = _load_sam_model()
+    prompt_box = expand_person_box(
+        person_box,
+        image.size,
+        horizontal_ratio=0.03,
+        top_ratio=0.35,
+        bottom_ratio=0.01,
+    )
+    points, labels = _sam_prompt_points(image.size, pose_keypoints, person_box=person_box)
+    results = model.predict(
+        np.array(image.convert("RGB")),
+        bboxes=[list(prompt_box)],
+        points=points,
+        labels=labels,
+        verbose=False,
+    )
+    if not results:
+        return None, None
+
+    masks = getattr(results[0], "masks", None)
+    if masks is None or len(masks.data) == 0:
+        return None, None
+
+    try:
+        mask_arrays = masks.data.cpu().numpy()
+    except Exception:
+        mask_arrays = masks.data.numpy()
+    mask_array = max(mask_arrays, key=lambda item: int(np.count_nonzero(item)))
+    mask = Image.fromarray((mask_array > 0.5).astype("uint8") * 255, mode="L")
+    if mask.size != image.size:
+        mask = mask.resize(image.size, resample=Image.NEAREST)
+    return mask, _mask_box(mask)
 
 
 def detect_person_keypoints(image, conf_threshold: float = 0.25, target_box=None):
