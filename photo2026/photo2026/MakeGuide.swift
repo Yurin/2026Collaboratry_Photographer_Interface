@@ -17,9 +17,11 @@ struct MakeGuide: View {
 
     @State private var titleText: String = ""
     @State private var showSaveAlert: Bool = false
-    
+
     @State private var cropRect: CropRect = .centered
-    @State private var cropDragOffset: CGSize = .zero
+    @State private var croppedPreviewImage: UIImage?
+    @State private var showCropEditor = false
+    @State private var hasConfirmedCrop = false
     
     var body: some View {
         NavigationStack {
@@ -53,6 +55,18 @@ struct MakeGuide: View {
                 Button("OK") { }
             } message: {
                 Text(alertMessage)
+            }
+            .fullScreenCover(isPresented: $showCropEditor) {
+                if let selectedImage {
+                    CropEditorView(image: selectedImage, initialCrop: cropRect) { updatedCrop in
+                        cropRect = updatedCrop
+                        croppedPreviewImage = renderCroppedPreview(
+                            image: selectedImage,
+                            cropRect: updatedCrop
+                        )
+                        hasConfirmedCrop = true
+                    }
+                }
             }
         }
     }
@@ -94,112 +108,35 @@ struct MakeGuide: View {
 
     private var cropImageSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AppSectionTitle(title: "トリミング", eyebrow: "3 : 4 CROP")
+            AppSectionTitle(title: "最終プレビュー", eyebrow: "3 : 4 CROP")
 
-            GeometryReader { geo in
-                if let selectedImage {
-                    let imageFrame = aspectFitFrame(
-                        imageSize: selectedImage.size,
-                        containerSize: geo.size
-                    )
-                    let cropFrameWidth = imageFrame.width * cropRect.width
-                    let cropFrameHeight = imageFrame.height * cropRect.height
-                    let cropOriginX = imageFrame.minX
-                        + imageFrame.width * cropRect.x
-                        + cropDragOffset.width
-                    let cropOriginY = imageFrame.minY
-                        + imageFrame.height * cropRect.y
-                        + cropDragOffset.height
-
-                    ZStack {
-                        Color.gray.opacity(0.1)
-
-                        Image(uiImage: selectedImage)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: geo.size.width, height: geo.size.height)
-
-                        Color.black.opacity(0.42)
-                            .mask {
-                                Path { path in
-                                    path.addRect(CGRect(origin: .zero, size: geo.size))
-                                    path.addRoundedRect(
-                                        in: CGRect(
-                                            x: cropOriginX,
-                                            y: cropOriginY,
-                                            width: cropFrameWidth,
-                                            height: cropFrameHeight
-                                        ),
-                                        cornerSize: CGSize(width: 8, height: 8)
-                                    )
-                                }
-                                .fill(style: FillStyle(eoFill: true))
-                            }
-
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.white, lineWidth: 3)
-
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.clear)
-                                .gesture(
-                                    DragGesture()
-                                        .onChanged { value in
-                                            cropDragOffset = value.translation
-                                        }
-                                        .onEnded { _ in
-                                            let nextX = cropRect.x + cropDragOffset.width / imageFrame.width
-                                            let nextY = cropRect.y + cropDragOffset.height / imageFrame.height
-                                            let updated = CropRect(
-                                                x: nextX,
-                                                y: nextY,
-                                                width: cropRect.width,
-                                                height: cropRect.height
-                                            ).constrained()
-                                            cropRect = updated
-                                            cropDragOffset = .zero
-                                        }
-                                )
-                        }
-                        .frame(width: cropFrameWidth, height: cropFrameHeight)
-                        .position(
-                            x: cropOriginX + cropFrameWidth / 2,
-                            y: cropOriginY + cropFrameHeight / 2
-                        )
+            if let croppedPreviewImage {
+                Image(uiImage: croppedPreviewImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(3.0 / 4.0, contentMode: .fit)
+                    .background(Color.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .stroke(AppStyle.border, lineWidth: 1)
                     }
-                    .clipped()
-                }
             }
-            .frame(height: 280)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
 
-            HStack(spacing: 16) {
-                Button {
-                    scaleCrop(by: 0.9)
-                } label: {
-                    Image(systemName: "minus.magnifyingglass")
-                }
-                .buttonStyle(AppIconButtonStyle())
-                .accessibilityLabel("トリミング範囲を縮小")
-
-                Button {
-                    scaleCrop(by: 1.1)
-                } label: {
-                    Image(systemName: "plus.magnifyingglass")
-                }
-                .buttonStyle(AppIconButtonStyle())
-                .accessibilityLabel("トリミング範囲を拡大")
-
-                Spacer()
-
-                Button {
-                    resetCrop()
-                } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                }
-                .buttonStyle(AppIconButtonStyle())
-                .accessibilityLabel("トリミング範囲をリセット")
+            if !hasConfirmedCrop {
+                Label("トリミング範囲を決定してください", systemImage: "exclamationmark.circle")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(AppStyle.warning)
             }
+
+            Button {
+                showCropEditor = true
+            } label: {
+                Label("トリミングを変更", systemImage: "crop")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(AppSecondaryButtonStyle())
         }
     }
 
@@ -234,8 +171,10 @@ struct MakeGuide: View {
                     .frame(maxWidth: .infinity)
             }
         }
-        .buttonStyle(AppCompactButtonStyle(filled: selectedImage != nil && !isGenerating))
-        .disabled(selectedImage == nil || isGenerating)
+        .buttonStyle(AppCompactButtonStyle(
+            filled: selectedImage != nil && hasConfirmedCrop && !isGenerating
+        ))
+        .disabled(selectedImage == nil || !hasConfirmedCrop || isGenerating)
     }
 
     private var displaySessionId: String {
@@ -243,7 +182,7 @@ struct MakeGuide: View {
     }
 
     private func generateGuide() {
-        guard let selectedImage else { return }
+        guard let selectedImage, hasConfirmedCrop else { return }
         isGenerating = true
         alertMessage = ""
         showGenerationErrorAlert = false
@@ -323,8 +262,14 @@ struct MakeGuide: View {
                     self.generatedGuideImages = [:]
                     self.generatedGuideId = nil
                     self.generatedFeaturesUrl = nil
-                    self.cropRect = .centered(for: uiImage.size)
-                    self.cropDragOffset = .zero
+                    let initialCrop = CropRect.centered(for: uiImage.size)
+                    self.cropRect = initialCrop
+                    self.croppedPreviewImage = renderCroppedPreview(
+                        image: uiImage,
+                        cropRect: initialCrop
+                    )
+                    self.hasConfirmedCrop = false
+                    self.showCropEditor = true
                 }
             }
         } catch {
@@ -368,78 +313,43 @@ struct MakeGuide: View {
         generatedFeaturesUrl = nil
         titleText = ""
         cropRect = .centered
-        cropDragOffset = .zero
+        croppedPreviewImage = nil
+        showCropEditor = false
+        hasConfirmedCrop = false
     }
 
-    private func aspectFitFrame(imageSize: CGSize, containerSize: CGSize) -> CGRect {
-        guard imageSize.width > 0, imageSize.height > 0,
-              containerSize.width > 0, containerSize.height > 0 else {
-            return .zero
+    private func renderCroppedPreview(image: UIImage, cropRect: CropRect) -> UIImage? {
+        let crop = cropRect.constrained()
+        guard image.size.width > 0, image.size.height > 0,
+              crop.width > 0, crop.height > 0 else {
+            return nil
         }
 
-        let scale = min(
-            containerSize.width / imageSize.width,
-            containerSize.height / imageSize.height
+        let outputSize = CGSize(width: 450, height: 600)
+        let sourceCrop = CGRect(
+            x: image.size.width * crop.x,
+            y: image.size.height * crop.y,
+            width: image.size.width * crop.width,
+            height: image.size.height * crop.height
         )
-        let displayedSize = CGSize(
-            width: imageSize.width * scale,
-            height: imageSize.height * scale
-        )
+        let scaleX = outputSize.width / sourceCrop.width
+        let scaleY = outputSize.height / sourceCrop.height
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
 
-        return CGRect(
-            x: (containerSize.width - displayedSize.width) / 2,
-            y: (containerSize.height - displayedSize.height) / 2,
-            width: displayedSize.width,
-            height: displayedSize.height
-        )
-    }
-
-    private func resetCrop() {
-        guard let selectedImage else {
-            cropRect = .centered
-            cropDragOffset = .zero
-            return
+        return UIGraphicsImageRenderer(size: outputSize, format: format).image { _ in
+            UIColor.black.setFill()
+            UIRectFill(CGRect(origin: .zero, size: outputSize))
+            image.draw(
+                in: CGRect(
+                    x: -sourceCrop.minX * scaleX,
+                    y: -sourceCrop.minY * scaleY,
+                    width: image.size.width * scaleX,
+                    height: image.size.height * scaleY
+                )
+            )
         }
-
-        cropRect = .centered(for: selectedImage.size)
-        cropDragOffset = .zero
-    }
-
-    private func scaleCrop(by factor: Double) {
-        let centerX = cropRect.x + cropRect.width / 2
-        let centerY = cropRect.y + cropRect.height / 2
-        let minimumWidth = 0.15
-        let minimumHeight = 0.15
-        let minimumFactor = max(
-            minimumWidth / cropRect.width,
-            minimumHeight / cropRect.height
-        )
-        let appliedFactor = max(factor, minimumFactor)
-
-        var newWidth = cropRect.width * appliedFactor
-        var newHeight = cropRect.height * appliedFactor
-
-        let maximumFactor = min(
-            1.0 / newWidth,
-            1.0 / newHeight,
-            centerX / (newWidth / 2),
-            (1.0 - centerX) / (newWidth / 2),
-            centerY / (newHeight / 2),
-            (1.0 - centerY) / (newHeight / 2)
-        )
-
-        if maximumFactor < 1.0 {
-            newWidth *= maximumFactor
-            newHeight *= maximumFactor
-        }
-
-        cropRect = CropRect(
-            x: centerX - newWidth / 2,
-            y: centerY - newHeight / 2,
-            width: newWidth,
-            height: newHeight
-        ).constrained()
-        cropDragOffset = .zero
     }
 
 }
