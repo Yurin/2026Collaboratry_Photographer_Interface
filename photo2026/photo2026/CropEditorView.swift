@@ -47,7 +47,6 @@ struct CropEditorView: View {
                     Color.black
 
                     cropCanvas(size: cropFrameSize)
-                        .frame(width: cropFrameSize.width, height: cropFrameSize.height)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -123,7 +122,7 @@ struct CropEditorView: View {
             ruleOfThirdsGrid
 
             Rectangle()
-                .stroke(.white, lineWidth: 3)
+                .strokeBorder(.white, lineWidth: 3)
 
             VStack {
                 Spacer()
@@ -135,6 +134,10 @@ struct CropEditorView: View {
                     .padding(10)
             }
         }
+        // Fix the canvas bounds before clipping. If this frame is applied by the
+        // caller, the enlarged image can determine the ZStack's layout size and
+        // make the grid/border grow together with the pinch zoom.
+        .frame(width: size.width, height: size.height)
         .contentShape(Rectangle())
         .clipped()
         .gesture(dragGesture(canvasSize: size))
@@ -236,4 +239,3 @@ struct CropEditorView: View {
         return min(1 - half, max(half, value))
     }
 }
-
