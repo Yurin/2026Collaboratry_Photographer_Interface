@@ -166,9 +166,22 @@ def extract_normalized_person_features(image):
     person_box = {"x": 0.18, "y": 0.08, "width": 0.64, "height": 0.84}
     keypoints = fallback_keypoints()
     confidence = 0.0
+    mask_box = None
+
+    silhouette_available = False
+    try:
+        mask, mask_box = detect_person_mask(image)
+        silhouette_available = mask is not None
+        if mask_box is not None:
+            person_box = normalize_box(mask_box, image.width, image.height)
+    except Exception as error:
+        warnings.append(f"シルエット抽出エラー: {error}")
 
     try:
-        detected_box, detected_keypoints, person_count = detect_person_pose_with_count(image)
+        detected_box, detected_keypoints, person_count = detect_person_pose_with_count(
+            image,
+            target_box=mask_box,
+        )
         if detected_box is not None and detected_keypoints:
             person_box = normalize_box(detected_box, image.width, image.height)
             keypoints = [
@@ -189,16 +202,6 @@ def extract_normalized_person_features(image):
     except Exception as error:
         source = "fallback-template"
         warnings.append(f"姿勢推定エラー: {error}")
-
-    silhouette_available = False
-    try:
-        mask, mask_box = detect_person_mask(image)
-        if mask is not None:
-            silhouette_available = True
-        if source != "auto" and mask_box is not None:
-            person_box = normalize_box(mask_box, image.width, image.height)
-    except Exception as error:
-        warnings.append(f"シルエット抽出エラー: {error}")
 
     return {
         "source": source,

@@ -25,11 +25,13 @@ pip install -r guide_processor/requirements.txt
 
 backend は `PYTHON` 環境変数が指定されていればそれを使い、指定がなければ `python3` で `guide_processor/generate_guide.py` を実行します。
 
+シルエット生成は既定で `yolo11s-seg.pt` を使用します。初回実行時にUltralyticsからモデル（約20 MB）を自動取得するため、サーバーに外部通信がない場合は事前に重みを配置し、`YOLO_SEG_WEIGHTS`でパスを指定してください。
+
 仮想環境の Python を使う場合:
 
 ```sh
 cd 2026Collaboratry_Photographer_Interface/backend
-PYTHON=.venv/bin/python npm start
+PYTHON=.venv/bin/python YOLO_SEG_WEIGHTS=yolo11s-seg.pt npm start
 ```
 
 ## 3. backend サーバーを起動する

@@ -1,6 +1,6 @@
 """person_detector.py
 
-YOLOv8 を使った人物検出・セグメンテーション・姿勢推定の薄いラッパー。
+Ultralytics YOLO を使った人物検出・セグメンテーション・姿勢推定の薄いラッパー。
 通常ガイドは人物bboxだけを使い、シルエットガイドではmask/keypointsも使います。
 """
 import os
@@ -25,7 +25,7 @@ def load_model(weights: str | None = None, task: str = "detect"):
 
     default_weights = {
         "detect": os.environ.get("YOLO_DETECT_WEIGHTS", "yolov8n.pt"),
-        "segment": os.environ.get("YOLO_SEG_WEIGHTS", "yolov8n-seg.pt"),
+        "segment": os.environ.get("YOLO_SEG_WEIGHTS", "yolo11s-seg.pt"),
         "pose": os.environ.get("YOLO_POSE_WEIGHTS", "yolov8n-pose.pt"),
     }
     model_weights = weights or default_weights.get(task, "yolov8n.pt")
@@ -96,6 +96,32 @@ def _box_tuple(boxes, index: int) -> Tuple[int, int, int, int]:
     return (int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)))
 
 
+def _box_iou(first, second) -> float:
+    left = max(first[0], second[0])
+    top = max(first[1], second[1])
+    right = min(first[2], second[2])
+    bottom = min(first[3], second[3])
+    intersection = max(0, right - left) * max(0, bottom - top)
+    first_area = max(0, first[2] - first[0]) * max(0, first[3] - first[1])
+    second_area = max(0, second[2] - second[0]) * max(0, second[3] - second[1])
+    union = first_area + second_area - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def _matching_person_index(boxes, target_box, conf_threshold: float) -> Optional[int]:
+    candidates = _person_indices(boxes, conf_threshold=conf_threshold)
+    if not candidates:
+        return None
+    if target_box is None:
+        return _best_person_index(boxes, conf_threshold=conf_threshold)
+    scored = [
+        (_box_iou(_box_tuple(boxes, index), target_box), index)
+        for index in candidates
+    ]
+    best_iou, best_index = max(scored)
+    return best_index if best_iou >= 0.10 else None
+
+
 def detect_person_bbox(image, conf_threshold: float = 0.3) -> Optional[Tuple[int, int, int, int]]:
     """Detect person bbox in the given PIL image.
 
@@ -110,7 +136,13 @@ def detect_person_bbox(image, conf_threshold: float = 0.3) -> Optional[Tuple[int
     # ultralytics accepts numpy array in RGB
     arr = np.array(image.convert("RGB"))
 
-    results = model(arr)
+    results = model.predict(
+        arr,
+        classes=[0],
+        conf=conf_threshold,
+        imgsz=960,
+        verbose=False,
+    )
     if not results or len(results) == 0:
         return None
 
@@ -131,7 +163,14 @@ def detect_person_mask(image, conf_threshold: float = 0.3):
 
     model = load_model(task="segment")
     arr = np.array(image.convert("RGB"))
-    results = model(arr)
+    results = model.predict(
+        arr,
+        classes=[0],
+        conf=conf_threshold,
+        imgsz=960,
+        retina_masks=True,
+        verbose=False,
+    )
     if not results:
         return None, None
 
@@ -154,29 +193,40 @@ def detect_person_mask(image, conf_threshold: float = 0.3):
     return mask, _box_tuple(boxes, best_index)
 
 
-def detect_person_keypoints(image, conf_threshold: float = 0.25):
+def detect_person_keypoints(image, conf_threshold: float = 0.25, target_box=None):
     """Return COCO keypoints [(x, y, conf), ...] for the most prominent person."""
-    _, keypoints = detect_person_pose(image, conf_threshold=conf_threshold)
+    _, keypoints = detect_person_pose(
+        image,
+        conf_threshold=conf_threshold,
+        target_box=target_box,
+    )
     return keypoints
 
 
-def detect_person_pose(image, conf_threshold: float = 0.25):
+def detect_person_pose(image, conf_threshold: float = 0.25, target_box=None):
     """Return the prominent person's bbox and COCO keypoints from one pose inference."""
     person_box, keypoints, _ = detect_person_pose_with_count(
         image,
         conf_threshold=conf_threshold,
+        target_box=target_box,
     )
     return person_box, keypoints
 
 
-def detect_person_pose_with_count(image, conf_threshold: float = 0.25):
+def detect_person_pose_with_count(image, conf_threshold: float = 0.25, target_box=None):
     """Return the prominent pose and the number of detected people."""
     if np is None or YOLO is None:
         raise RuntimeError("Required libraries for pose detection are not installed")
 
     model = load_model(task="pose")
     arr = np.array(image.convert("RGB"))
-    results = model(arr)
+    results = model.predict(
+        arr,
+        classes=[0],
+        conf=conf_threshold,
+        imgsz=960,
+        verbose=False,
+    )
     if not results:
         return None, None, 0
 
@@ -184,7 +234,11 @@ def detect_person_pose_with_count(image, conf_threshold: float = 0.25):
     boxes = getattr(r, "boxes", None)
     keypoints = getattr(r, "keypoints", None)
     person_count = len(_person_indices(boxes, conf_threshold=conf_threshold))
-    best_index = _best_person_index(boxes, conf_threshold=conf_threshold)
+    best_index = _matching_person_index(
+        boxes,
+        target_box=target_box,
+        conf_threshold=conf_threshold,
+    )
     if best_index is None or keypoints is None:
         return None, None, person_count
 

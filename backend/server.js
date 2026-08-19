@@ -348,8 +348,27 @@ function runPythonGuideGenerator(inputPath, outputPath, guideType, cropParams = 
     args.push("--crop-height", String(cropParams.cropHeight));
   }
 
-  execFileSync(pythonCommand, args, {
-    stdio: ["ignore", "pipe", "pipe"],
+  try {
+    execFileSync(pythonCommand, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    const stderr = String(error.stderr || "");
+    const userError = stderr.match(/GUIDE_USER_ERROR:([^\r\n]+)/);
+    if (userError) {
+      const guideError = new Error(userError[1].trim());
+      guideError.statusCode = 422;
+      throw guideError;
+    }
+    throw error;
+  }
+}
+
+function sendGuideGenerationError(res, error, fallbackMessage) {
+  const statusCode = error.statusCode || 500;
+  res.status(statusCode).json({
+    success: false,
+    error: error.statusCode ? error.message : fallbackMessage,
   });
 }
 
@@ -1683,10 +1702,7 @@ app.post("/api/session/:sessionId/generate-guide", upload.single("reference"), (
     persistCanonicalGuideFeatures(featuresPath, guideId);
   } catch (error) {
     console.error("guide generation failed:", error);
-    return res.status(500).json({
-      success: false,
-      error: "guide generation failed",
-    });
+    return sendGuideGenerationError(res, error, "guide generation failed");
   }
 
   const url = makeFileUrl(sessionId, outputFilename, "guides");
@@ -1758,10 +1774,7 @@ app.post("/api/session/:sessionId/generate-guide-set", upload.single("reference"
     persistCanonicalGuideFeatures(featuresPath, guideId);
   } catch (error) {
     console.error("guide set generation failed:", error);
-    return res.status(500).json({
-      success: false,
-      error: "guide set generation failed",
-    });
+    return sendGuideGenerationError(res, error, "guide set generation failed");
   }
 
   res.json({

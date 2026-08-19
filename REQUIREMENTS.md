@@ -111,7 +111,7 @@
 | C-02 | 3:4 トリミング | 実装済み | 枠の移動、拡大縮小、リセット、正規化座標の送信が可能 |
 | C-03 | 人物枠ガイド生成 | 実装済み | YOLO 人物検出結果を使い、検出失敗時は中央テンプレートへフォールバックする |
 | C-04 | 人物枠＋主要ポイント生成 | 一部実装 | 人物枠は検出結果を使うが、主要ポイントは定型線であり実ポーズ推定結果ではない |
-| C-05 | シルエットガイド生成 | 一部実装 | セグメンテーションと姿勢推定の試行はあるが、精度検証と最終調整は未完了 |
+| C-05 | シルエットガイド生成 | 実装済み | YOLO11s、960px推論、高解像度マスク、姿勢との人物対応付け、後処理、品質不足時の再トリミング案内に対応する。実写真による閾値評価は継続する |
 | C-06 | 3種類のガイド一括生成 | 実装済み | 人物枠、主要ポイント、シルエットを一括生成・取得できる |
 | C-07 | ガイド位置・大きさ調整 | 実装済み | iOS 上で左右位置と拡大率を調整し、画像へ反映して保存できる |
 | C-08 | ガイド端末内保存 | 実装済み | 参照画像、各ガイド画像、メタデータを Documents に保存する |
@@ -491,7 +491,7 @@
 | backend | `CLEANUP_INTERVAL_MS` | 10分 |
 | backend | `PYTHON` | `python3` |
 | Python | `YOLO_DETECT_WEIGHTS` | `yolov8n.pt` |
-| Python | `YOLO_SEG_WEIGHTS` | `yolov8n-seg.pt` |
+| Python | `YOLO_SEG_WEIGHTS` | `yolo11s-seg.pt` |
 | Python | `YOLO_POSE_WEIGHTS` | `yolov8n-pose.pt` |
 | iOS | `ServerBaseURL` | `Info.plist` で指定 |
 | iOS | `WebSocketBaseURL` | `Info.plist` で指定 |

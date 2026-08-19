@@ -7,6 +7,7 @@ from PIL import Image
 
 from image_utils import open_image, trim_to_aspect_ratio
 from person_detector import detect_person_mask, detect_person_pose_with_count
+from silhouette_quality import postprocess_person_mask
 
 COCO_JOINT_NAMES = [
     "nose",
@@ -90,8 +91,27 @@ def main():
     image.convert("RGB").save(image_output_path, format="JPEG", quality=92)
 
     result = template_result()
+    mask_box = None
+    silhouette_available = False
+    silhouette_warnings = []
+    if mask_output_path:
+        try:
+            mask, mask_box = detect_person_mask(image)
+            if mask is not None:
+                mask = postprocess_person_mask(mask)
+                mask_output_path.parent.mkdir(parents=True, exist_ok=True)
+                mask.save(mask_output_path, format="PNG")
+                silhouette_available = True
+                if mask_box is not None:
+                    result["boundingBox"] = normalize_box(mask_box, image.width, image.height)
+        except Exception as error:
+            silhouette_warnings.append(f"シルエット抽出エラー: {error}")
+
     try:
-        person_box, keypoints, person_count = detect_person_pose_with_count(image)
+        person_box, keypoints, person_count = detect_person_pose_with_count(
+            image,
+            target_box=mask_box,
+        )
         if person_box is not None and keypoints:
             result = {
                 "source": "auto",
@@ -108,26 +128,18 @@ def main():
                     for name, (x, y, confidence) in zip(COCO_JOINT_NAMES, keypoints)
                 ],
                 "warnings": (
-                    []
+                    silhouette_warnings
                     if person_count == 1
-                    else [f"人物を{person_count}人検出しました。対象人物の関節点を確認してください。"]
+                    else silhouette_warnings
+                    + [f"人物を{person_count}人検出しました。対象人物の関節点を確認してください。"]
                 ),
             }
     except Exception as error:
         result["warnings"].append(f"姿勢推定エラー: {error}")
 
-    result["silhouetteAvailable"] = False
-    if mask_output_path:
-        try:
-            mask, mask_box = detect_person_mask(image)
-            if mask is not None:
-                mask_output_path.parent.mkdir(parents=True, exist_ok=True)
-                mask.save(mask_output_path, format="PNG")
-                result["silhouetteAvailable"] = True
-                if result["source"] != "auto" and mask_box is not None:
-                    result["boundingBox"] = normalize_box(mask_box, image.width, image.height)
-        except Exception as error:
-            result["warnings"].append(f"シルエット抽出エラー: {error}")
+    if result["source"] != "auto":
+        result["warnings"].extend(silhouette_warnings)
+    result["silhouetteAvailable"] = silhouette_available
 
     result["canvas"] = {
         "width": args.width,

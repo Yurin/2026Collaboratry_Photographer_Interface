@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import argparse
+import sys
 from pathlib import Path
 from PIL import Image
 
 from image_utils import open_image, trim_to_aspect_ratio, save_png, crop_with_normalized_rect
 from guide_types import create_keypoints_guide, create_rectangle_guide, create_silhouette_guide
 from person_detector import detect_person_bbox, detect_person_keypoints, detect_person_mask
+from silhouette_quality import MaskQualityError, postprocess_person_mask, validate_person_mask
 
 GUIDE_MAP = {
     "rectangle": create_rectangle_guide,
@@ -69,15 +71,27 @@ def main():
     if args.type == "silhouette":
         try:
             person_mask, mask_box = detect_person_mask(output_image)
-            if mask_box is not None:
-                person_box = mask_box
+            if person_mask is None or mask_box is None:
+                raise MaskQualityError(["人物マスクを検出できません"])
+            person_box = mask_box
         except Exception as error:
-            print(f"Segmentation unavailable, using template silhouette: {error}")
+            if isinstance(error, MaskQualityError):
+                raise
+            raise MaskQualityError(["セグメンテーションを実行できません"]) from error
 
         try:
-            pose_keypoints = detect_person_keypoints(output_image)
+            pose_keypoints = detect_person_keypoints(output_image, target_box=person_box)
         except Exception as error:
             print(f"Pose unavailable, using silhouette without skeleton: {error}")
+
+        processed_mask = postprocess_person_mask(person_mask)
+        validate_person_mask(
+            person_mask,
+            processed_mask,
+            person_box,
+            pose_keypoints=pose_keypoints,
+        )
+        person_mask = processed_mask
 
     guide_creator = GUIDE_MAP[args.type]
     guide_image = guide_creator(
@@ -91,4 +105,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except MaskQualityError as error:
+        print(f"GUIDE_USER_ERROR:{error}", file=sys.stderr)
+        raise SystemExit(2)

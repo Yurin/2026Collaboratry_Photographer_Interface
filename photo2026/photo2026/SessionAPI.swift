@@ -266,6 +266,26 @@ enum SessionAPIError: Error {
     case invalidURL
     case requestFailed(statusCode: Int)
     case invalidResponse
+    case server(message: String, statusCode: Int)
+}
+
+extension SessionAPIError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "サーバーのURLが正しくありません。"
+        case .requestFailed(let statusCode):
+            return "サーバーとの通信に失敗しました（HTTP \(statusCode)）。"
+        case .invalidResponse:
+            return "サーバーから正しい応答を受信できませんでした。"
+        case .server(let message, _):
+            return message
+        }
+    }
+}
+
+private struct SessionAPIErrorResponse: Decodable {
+    let error: String
 }
 
 final class SessionAPI {
@@ -335,6 +355,12 @@ final class SessionAPI {
             throw SessionAPIError.invalidResponse
         }
         guard (200...299).contains(httpResponse.statusCode) else {
+            if let serverError = try? JSONDecoder().decode(SessionAPIErrorResponse.self, from: data) {
+                throw SessionAPIError.server(
+                    message: serverError.error,
+                    statusCode: httpResponse.statusCode
+                )
+            }
             throw SessionAPIError.requestFailed(statusCode: httpResponse.statusCode)
         }
 
@@ -402,6 +428,12 @@ final class SessionAPI {
             throw SessionAPIError.invalidResponse
         }
         guard (200...299).contains(httpResponse.statusCode) else {
+            if let serverError = try? JSONDecoder().decode(SessionAPIErrorResponse.self, from: data) {
+                throw SessionAPIError.server(
+                    message: serverError.error,
+                    statusCode: httpResponse.statusCode
+                )
+            }
             throw SessionAPIError.requestFailed(statusCode: httpResponse.statusCode)
         }
 
