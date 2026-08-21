@@ -193,9 +193,7 @@ private extension TakePhoto {
 
                 Picker("表示", selection: $displayMode) {
                     Text("QR").tag(SessionDisplayMode.qr)
-                    if allowsSubjectSupport {
-                        Text("映像").tag(SessionDisplayMode.preview)
-                    }
+                    Text("映像").tag(SessionDisplayMode.preview)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 20)
