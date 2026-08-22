@@ -55,6 +55,7 @@ let wsVideo = null;
 let wsSession = null;
 let shareActive = false;
 let liveInterval = null;
+let videoSocketClosedByUser = false;
 let guideUrlOverride = null;
 let reconnectTimer = null;
 let sessionSocketClosedByUser = false;
@@ -644,20 +645,35 @@ function disconnectSessionSocket() {
 
 function connectVideoSocket() {
   if (!sessionId) return;
-  if (wsVideo && wsVideo.readyState === WebSocket.OPEN) return;
+  if (wsVideo && [WebSocket.CONNECTING, WebSocket.OPEN].includes(wsVideo.readyState)) return;
 
-  wsVideo = new WebSocket(makeWsUrl("/ws/video", {
+  videoSocketClosedByUser = false;
+  const socket = new WebSocket(makeWsUrl("/ws/video", {
     sessionId,
     role: "sender",
   }));
-  wsVideo.binaryType = "arraybuffer";
+  wsVideo = socket;
+  socket.binaryType = "arraybuffer";
 
-  wsVideo.addEventListener("open", () => {
+  socket.addEventListener("open", () => {
+    if (wsVideo !== socket) return;
+    if (!shareActive) {
+      disconnectVideoSocket();
+      return;
+    }
+
     clearError();
     setStatus(`セッション: ${sessionId} - ライブ接続済み`);
+
+    if (liveInterval) {
+      clearInterval(liveInterval);
+    }
+    sendVideoFrame();
+    liveInterval = setInterval(sendVideoFrame, 250);
   });
 
-  wsVideo.addEventListener("close", () => {
+  socket.addEventListener("close", () => {
+    if (wsVideo !== socket) return;
     wsVideo = null;
     shareActive = false;
     stopLiveShare(false);
@@ -665,23 +681,29 @@ function connectVideoSocket() {
     setConnectionState(wsSession?.readyState === WebSocket.OPEN ? "connected" : "disconnected");
   });
 
-  wsVideo.addEventListener("error", () => {
+  socket.addEventListener("error", () => {
+    if (wsVideo !== socket) return;
     wsVideo = null;
     shareActive = false;
     stopLiveShare(false);
     shareLiveBtn.textContent = "ライブ共有";
-    showError("ライブ共有用の接続に失敗しました。サーバーとの接続を確認してください。");
+    if (!videoSocketClosedByUser) {
+      showError("ライブ共有用の接続に失敗しました。サーバーとの接続を確認してください。");
+    }
   });
 }
 
 function disconnectVideoSocket() {
   if (wsVideo) {
+    videoSocketClosedByUser = true;
     wsVideo.close(1000);
     wsVideo = null;
   }
 }
 
 function sendVideoFrame() {
+  if (wsVideo?.readyState === WebSocket.CONNECTING) return;
+
   if (!wsVideo || wsVideo.readyState !== WebSocket.OPEN) {
     if (shareActive) {
       stopLiveShare();
@@ -765,14 +787,9 @@ function startLiveShare() {
   }
 
   clearError();
-  connectVideoSocket();
   shareActive = true;
   shareLiveBtn.textContent = "停止";
-
-  if (liveInterval) {
-    clearInterval(liveInterval);
-  }
-  liveInterval = setInterval(sendVideoFrame, 250);
+  connectVideoSocket();
 }
 
 function stopLiveShare(shouldCloseSocket = true) {
