@@ -40,6 +40,10 @@ const guideControls = document.querySelectorAll(".guide-control");
 const status = document.querySelector(".status");
 
 const API_BASE_PATH = "/api";
+const DRAFT_UPLOAD_TIMEOUT_MS = 20000;
+const PHOTO_SHARE_TIMEOUT_MS = 30000;
+const PHOTO_FALLBACK_UPLOAD_TIMEOUT_MS = 60000;
+const EVENT_UPLOAD_TIMEOUT_MS = 10000;
 
 let selectedPhotoIndex = null;
 
@@ -118,6 +122,50 @@ function clearError() {
 function showActionHint(message) {
   errorPanel.textContent = message;
   errorPanel.hidden = false;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`通信が${Math.round(timeoutMs / 1000)}秒以内に完了しませんでした`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function shouldRetryResponse(response) {
+  return response.status === 408 || response.status === 429 || response.status >= 500;
+}
+
+async function fetchWithRetry(url, options, {
+  timeoutMs = 30000,
+  attempts = 2,
+} = {}) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetchWithTimeout(url, options, timeoutMs);
+      if (!shouldRetryResponse(response) || attempt === attempts) {
+        return response;
+      }
+      lastError = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) throw error;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+  }
+
+  throw lastError || new Error("通信に失敗しました");
 }
 
 function showSupportMessage(message, options = {}) {
@@ -442,7 +490,7 @@ async function flushPendingEvents() {
     .slice(0, 100);
   if (batch.length === 0) return;
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${API_BASE_PATH}/experiments/trials/${encodeURIComponent(targetTrialId)}/events`,
       {
         method: "POST",
@@ -452,7 +500,8 @@ async function flushPendingEvents() {
           role: "photographer",
           events: batch.map(({ trialId, ...event }) => event),
         }),
-      }
+      },
+      EVENT_UPLOAD_TIMEOUT_MS
     );
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const acceptedIds = new Set(batch.map((event) => event.eventId));
@@ -1278,6 +1327,8 @@ async function uploadDraftAndAnalyze(record) {
   }
 
   try {
+    record.draftStatus = "uploading";
+    record.errorReason = null;
     record.draftSaveStartTimestamp = nowTimestamp();
     logAnalysisEvent(record, "photo_draft_save_started");
     const formData = new FormData();
@@ -1288,9 +1339,10 @@ async function uploadDraftAndAnalyze(record) {
     formData.append("guideId", record.guideId || "");
     formData.append("guideTransform", JSON.stringify(record.guideTransform));
     formData.append("draft", dataURLtoBlob(record.imageUrl), "captured_photo.jpg");
-    const response = await fetch(
+    const response = await fetchWithRetry(
       `${API_BASE_PATH}/sessions/${encodeURIComponent(sessionId)}/draft-photos`,
-      { method: "POST", body: formData }
+      { method: "POST", body: formData },
+      { timeoutMs: DRAFT_UPLOAD_TIMEOUT_MS, attempts: 2 }
     );
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const result = await response.json();
@@ -1460,6 +1512,22 @@ deleteSessionBtn.addEventListener("click", async () => {
   }
 });
 
+async function waitForDraftUploads(records, label = "送信準備中") {
+  let completed = 0;
+  sendBtn.textContent = `${label} (0/${records.length})...`;
+
+  await Promise.allSettled(
+    records.map(async (record) => {
+      try {
+        await record.uploadPromise;
+      } finally {
+        completed += 1;
+        sendBtn.textContent = `${label} (${completed}/${records.length})...`;
+      }
+    })
+  );
+}
+
 sendBtn.addEventListener("click", async () => {
   if (photos.length === 0) {
     showActionHint(
@@ -1480,9 +1548,19 @@ sendBtn.addEventListener("click", async () => {
 
   try {
     const recordsToSend = [...photos];
-    await Promise.allSettled(
-      recordsToSend.map((record) => record.uploadPromise).filter(Boolean)
+    await waitForDraftUploads(recordsToSend);
+
+    const failedDrafts = recordsToSend.filter(
+      (record) => record.draftStatus !== "ready" || !record.draftPhotoId
     );
+    if (failedDrafts.length > 0) {
+      failedDrafts.forEach((record) => {
+        record.draftStatus = "uploading";
+        record.uploadPromise = uploadDraftAndAnalyze(record);
+      });
+      await waitForDraftUploads(failedDrafts, "失敗した写真を再送中");
+    }
+
     sendBtn.textContent = "送信中...";
 
     const canPromoteDrafts = recordsToSend.every(
@@ -1490,7 +1568,7 @@ sendBtn.addEventListener("click", async () => {
     );
     let response;
     if (canPromoteDrafts) {
-      response = await fetch(
+      response = await fetchWithRetry(
         `${API_BASE_PATH}/sessions/${encodeURIComponent(sessionId)}/photos/share`,
         {
           method: "POST",
@@ -1500,7 +1578,8 @@ sendBtn.addEventListener("click", async () => {
             trialId: currentTrialId,
             clientTimestamp: new Date().toISOString(),
           }),
-        }
+        },
+        { timeoutMs: PHOTO_SHARE_TIMEOUT_MS, attempts: 2 }
       );
     } else {
       console.info("draft promotion unavailable; falling back to the existing photo upload flow");
@@ -1513,10 +1592,14 @@ sendBtn.addEventListener("click", async () => {
       recordsToSend.forEach((record, index) => {
         formData.append("photos", dataURLtoBlob(record.imageUrl), `photo_${index}.jpg`);
       });
-      response = await fetch(`${API_BASE_PATH}/photos`, {
-        method: "POST",
-        body: formData,
-      });
+      response = await fetchWithTimeout(
+        `${API_BASE_PATH}/photos`,
+        {
+          method: "POST",
+          body: formData,
+        },
+        PHOTO_FALLBACK_UPLOAD_TIMEOUT_MS
+      );
     }
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -1530,7 +1613,7 @@ sendBtn.addEventListener("click", async () => {
         .forEach((record) => { void removeDraftFromServer(record); });
     }
     clearError();
-    await logExperimentEvent("photos_sent", {
+    void logExperimentEvent("photos_sent", {
       photoCount: result.files?.length || photos.length,
       photoIds: result.files?.map((file) => file.filename) || [],
     });
@@ -1544,7 +1627,7 @@ sendBtn.addEventListener("click", async () => {
     }
   } catch (error) {
     console.error(error);
-    showError("写真の送信に失敗しました。サーバー接続とセッションIDを確認してください。");
+    showError(`写真の送信に失敗しました。${error.message}。もう一度「送信」を押してください。`);
     logExperimentEvent("photos_send_failed", { message: error.message });
   } finally {
     isSendingPhotos = false;

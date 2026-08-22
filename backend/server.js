@@ -67,6 +67,12 @@ const storage = multer.diskStorage({
     const isGuide = file.fieldname === "guide";
     const isReference = file.fieldname === "reference";
     const isDraft = file.fieldname === "draft";
+    const draftClientId = isDraft ? safeIdentifier(req.body.clientId) : "";
+    if (draftClientId) {
+      cb(null, `draft_${draftClientId}.jpg`);
+      return;
+    }
+
     const namePrefix = isGuide
       ? "guide_"
       : isReference
