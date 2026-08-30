@@ -4,7 +4,7 @@ import json
 import math
 from pathlib import Path
 
-from readiness import compute_ready
+from readiness import READINESS_THRESHOLDS, compute_ready
 
 UPPER_BODY_KEYS = {
     "leftShoulder",
@@ -166,7 +166,7 @@ def decompose_guidance(reference, observation, alignment_error):
     center_error = alignment_error["centerError"]
     scale_error = alignment_error["scaleError"]
 
-    if center_error > 0.035:
+    if center_error > READINESS_THRESHOLDS["center"]:
         if abs(dx) >= abs(dy):
             direction = "左" if dx > 0 else "右"
             message = f"被写体をもう少し{direction}に合わせてください"
@@ -177,7 +177,7 @@ def decompose_guidance(reference, observation, alignment_error):
 
     reference_size = math.sqrt(reference["personBox"]["width"] * reference["personBox"]["height"])
     observation_size = math.sqrt(observation["personBox"]["width"] * observation["personBox"]["height"])
-    if scale_error > 0.05:
+    if scale_error > READINESS_THRESHOLDS["scale"]:
         if observation_size < reference_size:
             message = "少し近づいてください"
         else:

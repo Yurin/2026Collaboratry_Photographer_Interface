@@ -1,9 +1,12 @@
+READINESS_THRESHOLDS = {
+    "center": 0.06,
+    "scale": 0.10,
+    "pose": 0.14,
+}
+
+
 def compute_ready(alignment_error, thresholds=None):
-    limits = {
-        "center": 0.06,
-        "scale": 0.10,
-        "pose": 0.14,
-    }
+    limits = READINESS_THRESHOLDS.copy()
     if thresholds:
         limits.update(thresholds)
 
