@@ -49,6 +49,7 @@ struct TakePhoto: View {
     @Binding var selectedIndex: Int
     @Binding var resetID: UUID
     @Binding var sessionId: String
+    @Binding var sessionHasEnded: Bool
 
     let selectedGuides: [GuideItem]
     @ObservedObject var experimentState: ExperimentState
@@ -74,11 +75,12 @@ struct TakePhoto: View {
     @State private var lastDisplayedReady: [String: Bool] = [:]
     @State private var subjectGuidanceDisplayLogs: [[String: Any]] = []
 
-    @State private var localSessionID: String = UUID().uuidString
+    @State private var localSessionID: String = ""
     @State private var connectionState: WebSocketConnectionState = .disconnected
     @State private var remoteImage: UIImage? = nil
     @State private var wsTask: URLSessionWebSocketTask? = nil
     @State private var shouldReconnectWebSocket: Bool = false
+    @State private var reconnectWorkItem: DispatchWorkItem? = nil
 
     private let webAppBaseURL = APIConfig.appBaseURL
 
@@ -811,10 +813,13 @@ private extension TakePhoto {
 
         if isExperimentMode {
             localSessionID = experimentState.sessionId
-        } else {
+        } else if sessionId.isEmpty || sessionHasEnded {
             localSessionID = UUID().uuidString
+        } else {
+            localSessionID = sessionId
         }
-        sessionId = localSessionID  // ContentViewのsessionIdに同期
+        sessionId = localSessionID
+        sessionHasEnded = false
         connectionState = .connecting
         remoteImage = nil
         displayMode = .qr
@@ -829,6 +834,8 @@ private extension TakePhoto {
     }
 
     func connectWebSocket(isReconnect: Bool = false) {
+        reconnectWorkItem?.cancel()
+        reconnectWorkItem = nil
         disconnectWebSocket(allowReconnect: true)
         connectionState = isReconnect ? .reconnecting : .connecting
         shouldReconnectWebSocket = true
@@ -868,13 +875,17 @@ private extension TakePhoto {
                 print("WebSocket connected, starting to receive messages")
                 self.sendGuideTransform()
                 self.logSubjectEvent("subject_video_socket_connected")
-                self.receiveWebSocketMessage()
+                self.receiveWebSocketMessage(from: task)
             }
         }
     }
 
     func disconnectWebSocket(allowReconnect: Bool = false) {
         shouldReconnectWebSocket = allowReconnect
+        if !allowReconnect {
+            reconnectWorkItem?.cancel()
+            reconnectWorkItem = nil
+        }
         let wasConnected = connectionState == .connected
         if !allowReconnect {
             connectionState = .disconnected
@@ -886,22 +897,17 @@ private extension TakePhoto {
         }
     }
 
-    func receiveWebSocketMessage() {
-        guard let task = wsTask else {
-            print("WebSocket task is nil")
-            DispatchQueue.main.async {
-                self.connectionState = .disconnected
-            }
-            return
-        }
-        
+    func receiveWebSocketMessage(from task: URLSessionWebSocketTask) {
         task.receive {result in
             
             switch result {
             case .failure(let error):
                 print("WebSocket receive error: \(error)")
                 DispatchQueue.main.async {
+                    guard self.wsTask === task else { return }
+                    self.wsTask = nil
                     self.connectionState = .disconnected
+                    self.remoteImage = nil
                     self.logSubjectEvent("subject_video_socket_disconnected")
                     self.scheduleReconnect()
                 }
@@ -913,6 +919,7 @@ private extension TakePhoto {
                 case .data(let data):
                     if let image = UIImage(data: data) {
                         DispatchQueue.main.async {
+                            guard self.wsTask === task else { return }
                             self.remoteImage = image
                         }
                         imageProcessed = true
@@ -924,6 +931,7 @@ private extension TakePhoto {
                     if let data = Data(base64Encoded: text),
                        let image = UIImage(data: data) {
                         DispatchQueue.main.async {
+                            guard self.wsTask === task else { return }
                             self.remoteImage = image
                         }
                         imageProcessed = true
@@ -935,12 +943,16 @@ private extension TakePhoto {
                 
                 if imageProcessed {
                     DispatchQueue.main.async {
+                        guard self.wsTask === task else { return }
                         self.connectionState = .connected
                     }
                 }
 
                 // Continue receiving
-                self.receiveWebSocketMessage()
+                DispatchQueue.main.async {
+                    guard self.wsTask === task else { return }
+                    self.receiveWebSocketMessage(from: task)
+                }
             }
         }
     }
@@ -949,11 +961,15 @@ private extension TakePhoto {
         guard shouldReconnectWebSocket, phase == .qrAndPreview else { return }
 
         connectionState = .reconnecting
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        reconnectWorkItem?.cancel()
+        let workItem = DispatchWorkItem {
             guard self.shouldReconnectWebSocket, self.phase == .qrAndPreview else { return }
+            self.reconnectWorkItem = nil
             print("Attempting to reconnect WebSocket")
             self.connectWebSocket(isReconnect: true)
         }
+        reconnectWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
     }
 
     func uploadGuideToSession() async {
@@ -1004,6 +1020,7 @@ private extension TakePhoto {
             try await SessionAPI.shared.endSession(sessionId: localSessionID)
             shouldReconnectWebSocket = false
             disconnectWebSocket()
+            sessionHasEnded = true
             logSubjectEvent("subject_capture_screen_ended")
             selectedIndex = TabbarItem.receivedPhotos.rawValue
         } catch {
@@ -1027,9 +1044,7 @@ private extension TakePhoto {
         phase = .qrAndPreview
         displayMode = .qr
         currentGuideIndex = 0
-        localSessionID = isExperimentMode
-            ? experimentState.sessionId
-            : UUID().uuidString
+        localSessionID = isExperimentMode ? experimentState.sessionId : sessionId
         sessionId = localSessionID
         connectionState = .disconnected
         receivedImages = []
@@ -1291,6 +1306,7 @@ struct CameraGridOverlay: View {
         selectedIndex: .constant(0),
         resetID: .constant(UUID()),
         sessionId: .constant(""),
+        sessionHasEnded: .constant(false),
         selectedGuides: [],
         experimentState: ExperimentState(),
         roleGuidanceUpdate: nil

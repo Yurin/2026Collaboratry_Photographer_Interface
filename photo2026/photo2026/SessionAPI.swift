@@ -10,8 +10,8 @@ struct APIConfig {
 
     static var baseURL: URL {
         let configured = userConfiguredURL(for: apiBaseURLKey)
-            ?? bundledURL(for: apiBaseURLKey)
             ?? userConfiguredURL(for: legacyApiBaseURLKey)
+            ?? bundledURL(for: apiBaseURLKey)
             ?? bundledURL(for: legacyApiBaseURLKey)
             ?? AppEnvironment.apiBaseURL
         return normalizedBaseURL(configured)
@@ -19,14 +19,18 @@ struct APIConfig {
 
     static var appBaseURL: URL {
         let configured = userConfiguredURL(for: webAppBaseURLKey)
+            ?? userConfiguredURL(for: apiBaseURLKey).map(rootURL(from:))
+            ?? userConfiguredURL(for: legacyApiBaseURLKey).map(rootURL(from:))
             ?? bundledURL(for: webAppBaseURLKey)
         return normalizedBaseURL(configured ?? rootURL(from: baseURL))
     }
 
     static var wsBaseURL: URL {
         if let configured = userConfiguredURL(for: wsBaseURLKey)
-            ?? bundledURL(for: wsBaseURLKey)
             ?? userConfiguredURL(for: legacyWsBaseURLKey)
+            ?? webSocketURL(from: userConfiguredURL(for: apiBaseURLKey))
+            ?? webSocketURL(from: userConfiguredURL(for: legacyApiBaseURLKey))
+            ?? bundledURL(for: wsBaseURLKey)
             ?? bundledURL(for: legacyWsBaseURLKey) {
             return normalizedWebSocketURL(configured)
         }
@@ -101,6 +105,17 @@ struct APIConfig {
         }
 
         return components.url ?? url
+    }
+
+    private static func webSocketURL(from url: URL?) -> URL? {
+        guard let url,
+              var components = URLComponents(url: rootURL(from: url), resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.scheme = components.scheme == "https" ? "wss" : "ws"
+        components.path = "/ws/video"
+        components.query = nil
+        return components.url
     }
 
     private static func normalizedBaseURL(_ url: URL) -> URL {

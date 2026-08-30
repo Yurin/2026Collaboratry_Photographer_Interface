@@ -4,7 +4,8 @@ struct ContentView: View {
     @State private var selectedIndex = TabbarItem.home.rawValue
     @State private var takePhotoResetID = UUID()
     @State private var pendingSelectedGuides: [GuideItem] = []
-    @State private var sessionId: String = ""
+    @State private var sessionId: String = UUID().uuidString
+    @State private var sessionHasEnded = false
     @State private var photoRefreshRequest: Int = 0
     @State private var sessionSocketTask: URLSessionWebSocketTask?
     @State private var shouldReconnectSessionSocket = false
@@ -85,6 +86,7 @@ struct ContentView: View {
                 selectedIndex: $selectedIndex,
                 resetID: $takePhotoResetID,
                 sessionId: $sessionId,
+                sessionHasEnded: $sessionHasEnded,
                 selectedGuides: pendingSelectedGuides,
                 experimentState: experimentState,
                 roleGuidanceUpdate: roleGuidanceUpdate

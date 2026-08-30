@@ -63,6 +63,8 @@ let wsSession = null;
 let shareActive = false;
 let liveInterval = null;
 let videoSocketClosedByUser = false;
+let videoReconnectTimer = null;
+let videoFrameInFlight = false;
 let guideUrlOverride = null;
 let reconnectTimer = null;
 let sessionSocketClosedByUser = false;
@@ -703,9 +705,10 @@ function disconnectSessionSocket() {
 }
 
 function connectVideoSocket() {
-  if (!sessionId) return;
+  if (!sessionId || !shareActive || sessionEndRequested) return;
   if (wsVideo && [WebSocket.CONNECTING, WebSocket.OPEN].includes(wsVideo.readyState)) return;
 
+  clearTimeout(videoReconnectTimer);
   videoSocketClosedByUser = false;
   const socket = new WebSocket(makeWsUrl("/ws/video", {
     sessionId,
@@ -723,6 +726,7 @@ function connectVideoSocket() {
 
     clearError();
     setStatus(`セッション: ${sessionId} - ライブ接続済み`);
+    shareLiveBtn.textContent = "停止";
 
     if (liveInterval) {
       clearInterval(liveInterval);
@@ -734,18 +738,20 @@ function connectVideoSocket() {
   socket.addEventListener("close", () => {
     if (wsVideo !== socket) return;
     wsVideo = null;
-    shareActive = false;
-    stopLiveShare(false);
-    shareLiveBtn.textContent = "ライブ共有";
-    setConnectionState(wsSession?.readyState === WebSocket.OPEN ? "connected" : "disconnected");
+    stopVideoFrameLoop();
+
+    if (videoSocketClosedByUser || !shareActive || sessionEndRequested) {
+      setConnectionState(wsSession?.readyState === WebSocket.OPEN ? "connected" : "disconnected");
+      return;
+    }
+
+    shareLiveBtn.textContent = "再接続中";
+    showError("ライブ共有の接続が切断されました。再接続を試みます。");
+    scheduleVideoReconnect();
   });
 
   socket.addEventListener("error", () => {
     if (wsVideo !== socket) return;
-    wsVideo = null;
-    shareActive = false;
-    stopLiveShare(false);
-    shareLiveBtn.textContent = "ライブ共有";
     if (!videoSocketClosedByUser) {
       showError("ライブ共有用の接続に失敗しました。サーバーとの接続を確認してください。");
     }
@@ -753,11 +759,30 @@ function connectVideoSocket() {
 }
 
 function disconnectVideoSocket() {
+  videoSocketClosedByUser = true;
+  clearTimeout(videoReconnectTimer);
+  videoReconnectTimer = null;
   if (wsVideo) {
-    videoSocketClosedByUser = true;
     wsVideo.close(1000);
     wsVideo = null;
   }
+}
+
+function stopVideoFrameLoop() {
+  if (liveInterval) {
+    clearInterval(liveInterval);
+    liveInterval = null;
+  }
+  videoFrameInFlight = false;
+}
+
+function scheduleVideoReconnect() {
+  if (!shareActive || videoSocketClosedByUser || sessionEndRequested) return;
+  clearTimeout(videoReconnectTimer);
+  videoReconnectTimer = setTimeout(() => {
+    videoReconnectTimer = null;
+    connectVideoSocket();
+  }, 2000);
 }
 
 function sendVideoFrame() {
@@ -765,14 +790,16 @@ function sendVideoFrame() {
 
   if (!wsVideo || wsVideo.readyState !== WebSocket.OPEN) {
     if (shareActive) {
-      stopLiveShare();
-      showError("ライブ共有の接続が切断されました。");
+      scheduleVideoReconnect();
     }
     return;
   }
-  if (!video.videoWidth || !video.videoHeight) return;
+  if (!video.videoWidth || !video.videoHeight || videoFrameInFlight) return;
+  if (wsVideo.bufferedAmount > 512 * 1024) return;
 
   try {
+    videoFrameInFlight = true;
+    const socket = wsVideo;
     const width = 320;
     const height = Math.round(width * 4 / 3);
     const sourceRect = centeredSourceRect(video.videoWidth, video.videoHeight, 3 / 4);
@@ -794,15 +821,26 @@ function sendVideoFrame() {
     );
 
     shareCanvas.toBlob((blob) => {
-      if (!blob || !wsVideo || wsVideo.readyState !== WebSocket.OPEN) return;
+      if (!blob || wsVideo !== socket || socket.readyState !== WebSocket.OPEN) {
+        videoFrameInFlight = false;
+        return;
+      }
       blob.arrayBuffer()
-        .then((buffer) => wsVideo.send(buffer))
+        .then((buffer) => {
+          if (wsVideo === socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(buffer);
+          }
+        })
         .catch((error) => {
           console.error("ArrayBuffer conversion error:", error);
           showError("ライブ映像の送信準備に失敗しました。");
+        })
+        .finally(() => {
+          videoFrameInFlight = false;
         });
     }, "image/jpeg", 0.6);
   } catch (error) {
+    videoFrameInFlight = false;
     console.error("Error in sendVideoFrame:", error);
     showError("ライブ映像の送信に失敗しました。");
   }
@@ -853,10 +891,7 @@ function startLiveShare() {
 
 function stopLiveShare(shouldCloseSocket = true) {
   shareActive = false;
-  if (liveInterval) {
-    clearInterval(liveInterval);
-    liveInterval = null;
-  }
+  stopVideoFrameLoop();
   if (shouldCloseSocket) {
     disconnectVideoSocket();
   }
@@ -1707,6 +1742,12 @@ retryEndSendBtn.addEventListener("click", async () => {
   sessionEndMessage.textContent = "写真を再送しています。しばらくお待ちください。";
   const sent = await sendCapturedPhotos({ promptAfterSend: false });
   showThankYouPage(!sent);
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && shareActive) {
+    connectVideoSocket();
+  }
 });
 
 sendBtn.addEventListener("click", () => {
