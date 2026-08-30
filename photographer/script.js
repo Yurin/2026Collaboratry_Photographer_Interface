@@ -25,6 +25,9 @@ const continueCaptureBtn = document.getElementById("continueCaptureBtn");
 const finishCaptureBtn = document.getElementById("finishCaptureBtn");
 const capturePanel = document.getElementById("capturePanel");
 const galleryPanel = document.getElementById("galleryPanel");
+const thankYouPanel = document.getElementById("thankYouPanel");
+const sessionEndMessage = document.getElementById("sessionEndMessage");
+const retryEndSendBtn = document.getElementById("retryEndSendBtn");
 const errorPanel = document.getElementById("errorPanel");
 const supportPanel = document.getElementById("supportPanel");
 const supportMessage = document.getElementById("supportMessage");
@@ -81,6 +84,9 @@ let latestDisplayedCaptureSequence = null;
 let lastDisplayedReady = {};
 let eventSequence = 0;
 let pendingEvents = [];
+let sessionEndRequested = false;
+let activePhotoSendPromise = null;
+let pendingPostSendResolve = null;
 const shareCanvas = document.createElement("canvas");
 
 function shortenSessionId(value) {
@@ -635,6 +641,10 @@ function connectSessionSocket(isReconnect = false) {
         }
       }
 
+      if (payload.type === "session-ended") {
+        void handleSessionEnded();
+      }
+
       if (payload.type === "session-deleted") {
         guideUrlOverride = null;
         activeGuideId = null;
@@ -935,6 +945,7 @@ function askPostSendAction() {
 
     const cleanup = (action) => {
       postSendDialog.hidden = true;
+      pendingPostSendResolve = null;
       continueCaptureBtn.removeEventListener("click", continueHandler);
       finishCaptureBtn.removeEventListener("click", finishHandler);
       resolve(action);
@@ -945,6 +956,7 @@ function askPostSendAction() {
 
     continueCaptureBtn.addEventListener("click", continueHandler);
     finishCaptureBtn.addEventListener("click", finishHandler);
+    pendingPostSendResolve = cleanup;
   });
 }
 
@@ -1528,112 +1540,177 @@ async function waitForDraftUploads(records, label = "送信準備中") {
   );
 }
 
-sendBtn.addEventListener("click", async () => {
+async function sendCapturedPhotos({ promptAfterSend = true } = {}) {
+  if (activePhotoSendPromise) return activePhotoSendPromise;
+
   if (photos.length === 0) {
-    showActionHint(
-      "『送信』は撮影した写真をサーバーに送るボタンです。まず『撮影』で写真を1枚以上保存してください。"
-    );
-    return;
+    if (promptAfterSend) {
+      showActionHint(
+        "『送信』は撮影した写真をサーバーに送るボタンです。まず『撮影』で写真を1枚以上保存してください。"
+      );
+    }
+    return !promptAfterSend;
   }
   if (!sessionId) {
-    showActionHint(
-      "『送信』にはセッションが必要です。被写体側のQRコードからこの画面を開いてください。"
-    );
-    return;
+    if (promptAfterSend) {
+      showActionHint(
+        "『送信』にはセッションが必要です。被写体側のQRコードからこの画面を開いてください。"
+      );
+    }
+    return false;
   }
 
   isSendingPhotos = true;
   sendBtn.disabled = true;
   sendBtn.textContent = "送信準備中...";
 
-  try {
-    const recordsToSend = [...photos];
-    await waitForDraftUploads(recordsToSend);
+  activePhotoSendPromise = (async () => {
+    try {
+      const recordsToSend = [...photos];
+      await waitForDraftUploads(recordsToSend);
 
-    const failedDrafts = recordsToSend.filter(
-      (record) => record.draftStatus !== "ready" || !record.draftPhotoId
-    );
-    if (failedDrafts.length > 0) {
-      failedDrafts.forEach((record) => {
-        record.draftStatus = "uploading";
-        record.uploadPromise = uploadDraftAndAnalyze(record);
-      });
-      await waitForDraftUploads(failedDrafts, "失敗した写真を再送中");
-    }
-
-    sendBtn.textContent = "送信中...";
-
-    const canPromoteDrafts = recordsToSend.every(
-      (record) => record.draftStatus === "ready" && record.draftPhotoId
-    );
-    let response;
-    if (canPromoteDrafts) {
-      response = await fetchWithRetry(
-        `${API_BASE_PATH}/sessions/${encodeURIComponent(sessionId)}/photos/share`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            photoIds: recordsToSend.map((record) => record.draftPhotoId),
-            trialId: currentTrialId,
-            clientTimestamp: new Date().toISOString(),
-          }),
-        },
-        { timeoutMs: PHOTO_SHARE_TIMEOUT_MS, attempts: 2 }
+      const failedDrafts = recordsToSend.filter(
+        (record) => record.draftStatus !== "ready" || !record.draftPhotoId
       );
-    } else {
-      console.info("draft promotion unavailable; falling back to the existing photo upload flow");
-      const formData = new FormData();
-      formData.append("sessionId", sessionId);
-      if (currentTrialId) {
-        formData.append("trialId", currentTrialId);
-        formData.append("clientTimestamp", new Date().toISOString());
+      if (failedDrafts.length > 0) {
+        failedDrafts.forEach((record) => {
+          record.draftStatus = "uploading";
+          record.uploadPromise = uploadDraftAndAnalyze(record);
+        });
+        await waitForDraftUploads(failedDrafts, "失敗した写真を再送中");
       }
-      recordsToSend.forEach((record, index) => {
-        formData.append("photos", dataURLtoBlob(record.imageUrl), `photo_${index}.jpg`);
-      });
-      response = await fetchWithTimeout(
-        `${API_BASE_PATH}/photos`,
-        {
-          method: "POST",
-          body: formData,
-        },
-        PHOTO_FALLBACK_UPLOAD_TIMEOUT_MS
+
+      sendBtn.textContent = "送信中...";
+
+      const canPromoteDrafts = recordsToSend.every(
+        (record) => record.draftStatus === "ready" && record.draftPhotoId
       );
-    }
+      let response;
+      if (canPromoteDrafts) {
+        response = await fetchWithRetry(
+          `${API_BASE_PATH}/sessions/${encodeURIComponent(sessionId)}/photos/share`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              photoIds: recordsToSend.map((record) => record.draftPhotoId),
+              trialId: currentTrialId,
+              clientTimestamp: new Date().toISOString(),
+            }),
+          },
+          { timeoutMs: PHOTO_SHARE_TIMEOUT_MS, attempts: 2 }
+        );
+      } else {
+        console.info("draft promotion unavailable; falling back to the existing photo upload flow");
+        const formData = new FormData();
+        formData.append("sessionId", sessionId);
+        if (currentTrialId) {
+          formData.append("trialId", currentTrialId);
+          formData.append("clientTimestamp", new Date().toISOString());
+        }
+        recordsToSend.forEach((record, index) => {
+          formData.append("photos", dataURLtoBlob(record.imageUrl), `photo_${index}.jpg`);
+        });
+        response = await fetchWithTimeout(
+          `${API_BASE_PATH}/photos`,
+          {
+            method: "POST",
+            body: formData,
+          },
+          PHOTO_FALLBACK_UPLOAD_TIMEOUT_MS
+        );
+      }
 
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const result = await response.json();
-    if (canPromoteDrafts) {
-      recordsToSend.forEach((record) => { record.draftStatus = "shared"; });
-    } else {
-      recordsToSend
-        .filter((record) => record.draftPhotoId)
-        .forEach((record) => { void removeDraftFromServer(record); });
-    }
-    clearError();
-    void logExperimentEvent("photos_sent", {
-      photoCount: result.files?.length || photos.length,
-      photoIds: result.files?.map((file) => file.filename) || [],
-    });
-    const nextAction = await askPostSendAction();
-    resetCapturedPhotos();
+      const result = await response.json();
+      if (canPromoteDrafts) {
+        recordsToSend.forEach((record) => { record.draftStatus = "shared"; });
+      } else {
+        recordsToSend
+          .filter((record) => record.draftPhotoId)
+          .forEach((record) => { void removeDraftFromServer(record); });
+      }
+      clearError();
+      void logExperimentEvent("photos_sent", {
+        photoCount: result.files?.length || photos.length,
+        photoIds: result.files?.map((file) => file.filename) || [],
+      });
 
-    if (nextAction === "finish") {
-      finishCaptureAfterSend();
-    } else {
-      showSupportMessage("送信済み写真をリセットしました。続けて撮影できます。", { autoHideMs: 3000 });
+      let nextAction = "finish";
+      if (promptAfterSend && !sessionEndRequested) {
+        nextAction = await askPostSendAction();
+      }
+      resetCapturedPhotos();
+
+      if (promptAfterSend && !sessionEndRequested) {
+        if (nextAction === "finish") {
+          finishCaptureAfterSend();
+        } else {
+          showSupportMessage("送信済み写真をリセットしました。続けて撮影できます。", { autoHideMs: 3000 });
+        }
+      }
+      return true;
+    } catch (error) {
+      console.error(error);
+      showError(`写真の送信に失敗しました。${error.message}。もう一度お試しください。`);
+      logExperimentEvent("photos_send_failed", { message: error.message });
+      return false;
+    } finally {
+      isSendingPhotos = false;
+      sendBtn.disabled = photos.length === 0 || sessionEndRequested;
+      sendBtn.textContent = "送信";
+      activePhotoSendPromise = null;
     }
-  } catch (error) {
-    console.error(error);
-    showError(`写真の送信に失敗しました。${error.message}。もう一度「送信」を押してください。`);
-    logExperimentEvent("photos_send_failed", { message: error.message });
-  } finally {
-    isSendingPhotos = false;
-    sendBtn.disabled = photos.length === 0;
-    sendBtn.textContent = "送信";
+  })();
+
+  return activePhotoSendPromise;
+}
+
+function showThankYouPage(sendFailed = false) {
+  capturePanel.hidden = true;
+  galleryPanel.hidden = true;
+  photoPreviewOverlay.hidden = true;
+  postSendDialog.hidden = true;
+  thankYouPanel.hidden = false;
+  sessionEndMessage.textContent = sendFailed
+    ? "写真を送信できませんでした。通信状態を確認して再送してください。"
+    : "写真の送信が完了しました。このページを閉じてください。";
+  retryEndSendBtn.hidden = !sendFailed;
+}
+
+async function handleSessionEnded() {
+  if (sessionEndRequested) return;
+  sessionEndRequested = true;
+  pendingPostSendResolve?.("finish");
+  stopLiveShare();
+  shareLiveBtn.textContent = "ライブ共有";
+  currentStream?.getTracks().forEach((track) => track.stop());
+  captureBtn.disabled = true;
+  shareLiveBtn.disabled = true;
+  clearBtn.disabled = true;
+  deleteSessionBtn.disabled = true;
+  sendBtn.disabled = true;
+  showSupportMessage("セッションが終了しました。未送信写真を送信しています。", { autoHideMs: 0 });
+
+  let sent = activePhotoSendPromise ? await activePhotoSendPromise : photos.length === 0;
+  if (!sent && photos.length > 0) {
+    sent = await sendCapturedPhotos({ promptAfterSend: false });
+  } else if (photos.length > 0) {
+    sent = await sendCapturedPhotos({ promptAfterSend: false });
   }
+  showThankYouPage(!sent);
+}
+
+retryEndSendBtn.addEventListener("click", async () => {
+  retryEndSendBtn.hidden = true;
+  sessionEndMessage.textContent = "写真を再送しています。しばらくお待ちください。";
+  const sent = await sendCapturedPhotos({ promptAfterSend: false });
+  showThankYouPage(!sent);
+});
+
+sendBtn.addEventListener("click", () => {
+  void sendCapturedPhotos();
 });
 
 window.addEventListener("beforeunload", () => {

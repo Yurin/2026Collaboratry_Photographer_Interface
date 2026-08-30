@@ -181,6 +181,10 @@ function getSessionGuideStatePath(sessionId) {
   return path.join(getSessionDir(sessionId), "current-guide.json");
 }
 
+function getSessionLifecyclePath(sessionId) {
+  return path.join(getSessionDir(sessionId), "session-lifecycle.json");
+}
+
 function getAnalysisDir(sessionId) {
   return path.join(getSessionDir(sessionId), "analysis");
 }
@@ -875,6 +879,14 @@ sessionWss.on("connection", (ws, req) => {
       type: "experiment-configured",
       sessionId,
       experiment,
+    });
+  }
+  const lifecycle = readJsonFile(getSessionLifecyclePath(sessionId));
+  if (lifecycle?.status === "ended") {
+    sendJson(ws, {
+      type: "session-ended",
+      sessionId,
+      endedAt: lifecycle.endedAt,
     });
   }
 
@@ -1858,6 +1870,7 @@ app.get("/api/photos", (req, res) => {
       sessionId,
       (filename) =>
         filename !== "current-guide.json" &&
+        filename !== "session-lifecycle.json" &&
         !filename.startsWith("guide_") &&
         !filename.startsWith("reference_")
     ).map((file) => ({
@@ -2181,6 +2194,40 @@ app.delete("/api/session/:sessionId", (req, res) => {
     success: true,
     sessionId,
     deleted,
+  });
+});
+
+// iOS側から撮影終了を通知する。写真や実験ログなどの保存データは削除しない。
+app.post("/api/session/:sessionId/end", (req, res) => {
+  const sessionId = safeSessionId(req.params.sessionId, "");
+
+  if (!sessionId) {
+    return res.status(400).json({
+      success: false,
+      error: "sessionId is required",
+    });
+  }
+
+  const lifecyclePath = getSessionLifecyclePath(sessionId);
+  const existing = readJsonFile(lifecyclePath);
+  const lifecycle = existing?.status === "ended"
+    ? existing
+    : {
+        status: "ended",
+        endedAt: new Date().toISOString(),
+      };
+
+  writeJsonFile(lifecyclePath, lifecycle);
+  notifySession(sessionId, {
+    type: "session-ended",
+    sessionId,
+    endedAt: lifecycle.endedAt,
+  });
+
+  res.json({
+    success: true,
+    sessionId,
+    ...lifecycle,
   });
 });
 

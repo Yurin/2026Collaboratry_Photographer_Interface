@@ -92,6 +92,7 @@ struct TakePhoto: View {
 
     @State private var receivedImages: [UIImage] = []
     @State private var isSavingPhotos: Bool = false
+    @State private var isEndingSession: Bool = false
     @State private var saveErrorMessage: String? = nil
     @State private var isUploadingGuide: Bool = false
     @State private var guideShareMessage: String? = nil
@@ -221,12 +222,25 @@ private extension TakePhoto {
                             .bold()
 
                         Button(role: .destructive) {
-                            endSession()
+                            Task { await endSession() }
                         } label: {
-                            Label("終了", systemImage: "xmark.circle.fill")
-                                .frame(maxWidth: .infinity)
+                            if isEndingSession {
+                                ProgressView()
+                                    .frame(maxWidth: .infinity)
+                            } else {
+                                Label("終了", systemImage: "xmark.circle.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
                         }
                         .buttonStyle(AppCompactButtonStyle(destructive: true))
+                        .disabled(isEndingSession)
+
+                        if let saveErrorMessage {
+                            Text(saveErrorMessage)
+                                .font(.footnote)
+                                .foregroundColor(.red)
+                                .multilineTextAlignment(.center)
+                        }
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 90)
@@ -980,15 +994,24 @@ private extension TakePhoto {
         isUploadingGuide = false
     }
 
-    func endSession() {
+    @MainActor
+    func endSession() async {
+        guard !isEndingSession else { return }
+        isEndingSession = true
         saveErrorMessage = nil
-        shouldReconnectWebSocket = false
-        disconnectWebSocket()
-        logSubjectEvent("subject_capture_screen_ended")
 
-        DispatchQueue.main.async {
+        do {
+            try await SessionAPI.shared.endSession(sessionId: localSessionID)
+            shouldReconnectWebSocket = false
+            disconnectWebSocket()
+            logSubjectEvent("subject_capture_screen_ended")
             selectedIndex = TabbarItem.receivedPhotos.rawValue
+        } catch {
+            saveErrorMessage = "セッション終了を通知できませんでした。通信状態を確認して、もう一度お試しください。"
+            print("session end error: \(error)")
         }
+
+        isEndingSession = false
     }
 
     func returnToPhotoTop() {

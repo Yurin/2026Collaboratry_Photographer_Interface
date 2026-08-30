@@ -35,7 +35,9 @@ struct MakeGuide: View {
                     sessionInfoSection
                     actionSection
                 }
-                .padding(16)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 110)
             }
             .background(AppStyle.background)
             .navigationTitle("ガイドを作る")
@@ -147,16 +149,6 @@ struct MakeGuide: View {
             Text("生成すると、枠・キーポイント・シルエットの3種類をまとめて保存します。")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-
-            HStack {
-                Text("セッションID")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                Spacer()
-                Text(displaySessionId)
-                    .font(.subheadline)
-                    .bold()
-            }
         }
     }
 

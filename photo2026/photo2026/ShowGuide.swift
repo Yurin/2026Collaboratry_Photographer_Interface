@@ -17,48 +17,59 @@ struct ShowGuide: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                headerSection
-
                 if store.guides.isEmpty {
                     emptyStateView
                 } else {
                     ScrollView {
-                        LazyVGrid(columns: columns, spacing: 12) {
-                            ForEach(store.guides) { guide in
-                                NavigationLink {
-                                    GuideDetailView(
-                                        guide: guide,
-                                        isSelected: selectedGuideIDs.contains(guide.id),
-                                        onToggleSelection: {
-                                            toggleSelection(for: guide.id)
-                                        }
-                                    )
-                                } label: {
-                                    GuideCardView(
-                                        guide: guide,
-                                        isSelected: selectedGuideIDs.contains(guide.id)
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                                .contextMenu {
-                                    Button {
-                                        toggleSelection(for: guide.id)
-                                    } label: {
-                                        Label(
-                                            selectedGuideIDs.contains(guide.id) ? "選択解除" : "選択する",
-                                            systemImage: selectedGuideIDs.contains(guide.id) ? "checkmark.circle.fill" : "circle"
-                                        )
-                                    }
+                        VStack(spacing: 0) {
+                            headerSection
 
-                                    Button(role: .destructive) {
-                                        deleteGuide(guide)
-                                    } label: {
-                                        Label("削除", systemImage: "trash")
+                            LazyVGrid(columns: columns, spacing: 12) {
+                                ForEach(store.guides) { guide in
+                                    ZStack(alignment: .topTrailing) {
+                                        NavigationLink {
+                                            GuideDetailView(
+                                                guide: guide,
+                                                isSelected: selectedGuideIDs.contains(guide.id),
+                                                onToggleSelection: {
+                                                    toggleSelection(for: guide.id)
+                                                }
+                                            )
+                                        } label: {
+                                            GuideCardView(
+                                                guide: guide,
+                                                isSelected: selectedGuideIDs.contains(guide.id)
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+
+                                        Button {
+                                            toggleSelection(for: guide.id)
+                                        } label: {
+                                            Image(systemName: selectedGuideIDs.contains(guide.id) ? "checkmark.circle.fill" : "circle")
+                                                .font(.system(size: 24))
+                                                .foregroundStyle(.white)
+                                                .frame(width: 44, height: 44)
+                                                .contentShape(Circle())
+                                                .shadow(radius: 2)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel(selectedGuideIDs.contains(guide.id) ? "選択解除" : "選択")
+                                        .padding(2)
+                                        .zIndex(1)
+                                    }
+                                    .contextMenu {
+                                        Button(role: .destructive) {
+                                            deleteGuide(guide)
+                                        } label: {
+                                            Label("削除", systemImage: "trash")
+                                        }
                                     }
                                 }
                             }
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 16)
                         }
-                        .padding(16)
                     }
                 }
 
@@ -67,6 +78,8 @@ struct ShowGuide: View {
             .background(AppStyle.background)
             .navigationTitle("ガイド")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(AppStyle.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -318,7 +331,9 @@ private struct GuideDetailView: View {
                 }
                 .buttonStyle(AppCompactButtonStyle(filled: true))
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 110)
         }
         .navigationTitle("ガイド詳細")
         .navigationBarTitleDisplayMode(.inline)
@@ -409,49 +424,41 @@ private struct GuideCardView: View {
     let isSelected: Bool
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            VStack(alignment: .leading, spacing: 8) {
-                if let image = guide.referenceUIImage {
-                    Image(uiImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(height: 150)
-                        .frame(maxWidth: .infinity)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                } else {
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Color.gray.opacity(0.12))
-                        .frame(height: 150)
-                        .overlay {
-                            Text("画像なし")
-                                .foregroundStyle(.secondary)
-                        }
-                }
-
-                Text(guide.title)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-
-                Text(guide.createdAt.formatted(date: .abbreviated, time: .omitted))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            if let image = guide.referenceUIImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(height: 150)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            } else {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color.gray.opacity(0.12))
+                    .frame(height: 150)
+                    .overlay {
+                        Text("画像なし")
+                            .foregroundStyle(.secondary)
+                    }
             }
-            .padding(10)
-            .background(AppStyle.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(isSelected ? Color.white : AppStyle.border, lineWidth: isSelected ? 3 : 1)
-            )
 
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 24))
-                .foregroundStyle(.white)
-                .padding(12)
-                .shadow(radius: 2)
+            Text(guide.title)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .lineLimit(1)
+
+            Text(guide.createdAt.formatted(date: .abbreviated, time: .omitted))
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+        .padding(10)
+        .background(AppStyle.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(isSelected ? Color.white : AppStyle.border, lineWidth: isSelected ? 3 : 1)
+        )
     }
 }
 

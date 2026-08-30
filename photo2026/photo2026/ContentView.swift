@@ -17,56 +17,7 @@ struct ContentView: View {
         ZStack(alignment: .bottom) {
             AppStyle.background.ignoresSafeArea()
 
-            TabView(selection: $selectedIndex) {
-                HomeView(
-                    selectedIndex: $selectedIndex,
-                    resetID: $takePhotoResetID,
-                    pendingSelectedGuides: $pendingSelectedGuides
-                )
-                .tag(TabbarItem.home.rawValue)
-
-                TakePhoto(
-                    selectedIndex: $selectedIndex,
-                    resetID: $takePhotoResetID,
-                    sessionId: $sessionId,
-                    selectedGuides: pendingSelectedGuides,
-                    experimentState: experimentState,
-                    roleGuidanceUpdate: roleGuidanceUpdate
-                )
-                .id(takePhotoResetID)
-                .tag(TabbarItem.photo.rawValue)
-
-                MakeGuide(sessionId: $sessionId)
-                    .tag(TabbarItem.guide.rawValue)
-
-                SceneTemplateView(
-                    selectedIndex: $selectedIndex,
-                    resetID: $takePhotoResetID,
-                    pendingSelectedGuides: $pendingSelectedGuides
-                )
-                .tag(TabbarItem.template.rawValue)
-
-                ShowGuide(
-                    selectedIndex: $selectedIndex,
-                    resetID: $takePhotoResetID,
-                    pendingSelectedGuides: $pendingSelectedGuides
-                )
-                .tag(TabbarItem.showGuide.rawValue)
-                
-                ReceivedPhotosView(
-                    sessionId: $sessionId,
-                    refreshRequest: photoRefreshRequest
-                )
-                .tag(TabbarItem.receivedPhotos.rawValue)
-
-                ExperimentSetupView(
-                    experimentState: experimentState,
-                    sessionId: $sessionId,
-                    selectedIndex: $selectedIndex,
-                    resetID: $takePhotoResetID
-                )
-                .tag(TabbarItem.experiment.rawValue)
-            }
+            selectedScreen
 
             HStack(spacing: 0) {
                 ForEach(TabbarItem.allCases, id: \.self) { item in
@@ -117,6 +68,54 @@ struct ContentView: View {
             roleGuidanceUpdate = nil
             latestRoleGuidanceCaptureSequence = nil
             latestRoleGuidanceCaptureTimestamp = nil
+        }
+    }
+
+    @ViewBuilder
+    private var selectedScreen: some View {
+        switch TabbarItem(rawValue: selectedIndex) ?? .home {
+        case .home:
+            HomeView(
+                selectedIndex: $selectedIndex,
+                resetID: $takePhotoResetID,
+                pendingSelectedGuides: $pendingSelectedGuides
+            )
+        case .photo:
+            TakePhoto(
+                selectedIndex: $selectedIndex,
+                resetID: $takePhotoResetID,
+                sessionId: $sessionId,
+                selectedGuides: pendingSelectedGuides,
+                experimentState: experimentState,
+                roleGuidanceUpdate: roleGuidanceUpdate
+            )
+            .id(takePhotoResetID)
+        case .guide:
+            MakeGuide(sessionId: $sessionId)
+        case .template:
+            SceneTemplateView(
+                selectedIndex: $selectedIndex,
+                resetID: $takePhotoResetID,
+                pendingSelectedGuides: $pendingSelectedGuides
+            )
+        case .showGuide:
+            ShowGuide(
+                selectedIndex: $selectedIndex,
+                resetID: $takePhotoResetID,
+                pendingSelectedGuides: $pendingSelectedGuides
+            )
+        case .receivedPhotos:
+            ReceivedPhotosView(
+                sessionId: $sessionId,
+                refreshRequest: photoRefreshRequest
+            )
+        case .experiment:
+            ExperimentSetupView(
+                experimentState: experimentState,
+                sessionId: $sessionId,
+                selectedIndex: $selectedIndex,
+                resetID: $takePhotoResetID
+            )
         }
     }
 
@@ -312,7 +311,7 @@ enum TabbarItem: Int, CaseIterable {
     var title: String {
         switch self {
         case .home:
-            return "ホーム"
+            return "Home"
         case .photo:
             return "写真"
         case .guide:

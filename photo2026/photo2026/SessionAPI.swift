@@ -530,6 +530,21 @@ final class SessionAPI {
         return nil
     }
 
+    func endSession(sessionId: String) async throws {
+        guard let url = URL(string: "api/session/\(sessionId)/end", relativeTo: baseURL) else {
+            throw SessionAPIError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw SessionAPIError.requestFailed(statusCode: (response as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+    }
+
     func fetchPhotos(sessionId: String) async throws -> [PhotoFile] {
         guard let url = URL(string: "api/photos?sessionId=\(sessionId)", relativeTo: baseURL) else {
             throw SessionAPIError.invalidURL

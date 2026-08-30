@@ -558,6 +558,55 @@ input {
   gap: 10px;
 }
 
+.thank-you-panel {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+  text-align: center;
+}
+
+.thank-you-card {
+  width: min(100%, 420px);
+  padding: 36px 24px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 24px;
+  background: rgba(24, 24, 27, 0.96);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+}
+
+.thank-you-icon {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 20px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  color: #111;
+  font-size: 32px;
+  font-weight: 900;
+}
+
+.thank-you-card h1 {
+  margin: 0 0 14px;
+  font-size: clamp(26px, 8vw, 38px);
+  line-height: 1.25;
+}
+
+.thank-you-card p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.65;
+}
+
+.thank-you-card .action-btn {
+  width: 100%;
+  margin-top: 24px;
+}
+
 .thumbnail {
   position: relative;
   width: 100%;
