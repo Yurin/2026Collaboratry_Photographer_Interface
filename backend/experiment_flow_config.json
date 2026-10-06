@@ -1,0 +1,64 @@
+{
+  "version": "participant-flow-v1",
+  "maximumCaptureCount": 5,
+  "questions": [
+    {
+      "id": "ease",
+      "text": "撮影を進めやすかった"
+    },
+    {
+      "id": "clarity",
+      "text": "自分が何を直すべきか分かりやすかった"
+    },
+    {
+      "id": "cooperation",
+      "text": "相手と協力しやすかった"
+    },
+    {
+      "id": "improvement",
+      "text": "写真を改善している感覚があった"
+    },
+    {
+      "id": "usefulness",
+      "text": "提示された情報は役に立った",
+      "conditions": [
+        "B",
+        "C"
+      ]
+    },
+    {
+      "id": "amount",
+      "text": "情報量は適切だった",
+      "conditions": [
+        "B",
+        "C"
+      ]
+    },
+    {
+      "id": "intrusion",
+      "text": "情報が邪魔に感じた",
+      "conditions": [
+        "B",
+        "C"
+      ]
+    },
+    {
+      "id": "timing",
+      "text": "情報が表示されるタイミングは適切だった",
+      "conditions": [
+        "B",
+        "C"
+      ]
+    },
+    {
+      "id": "finalSatisfaction",
+      "text": "最終写真に満足している"
+    },
+    {
+      "id": "finalSimilarity",
+      "text": "お手本写真を再現できたと思う"
+    }
+  ],
+  "freeTextQuestion": "撮影中に困ったこと・気になったことがあれば教えてください",
+  "showReadyToParticipants": false
+}

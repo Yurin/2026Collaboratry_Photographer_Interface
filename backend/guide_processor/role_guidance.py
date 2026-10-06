@@ -4,6 +4,8 @@ import json
 import math
 from pathlib import Path
 
+from progressive_guidance import analyze_progressive, load_config
+
 from readiness import READINESS_THRESHOLDS, compute_ready
 
 UPPER_BODY_KEYS = {
@@ -23,6 +25,8 @@ def parse_args():
     parser.add_argument("--observation", required=True)
     parser.add_argument("--output")
     parser.add_argument("--guide-transform")
+    parser.add_argument("--condition", choices=["A", "B", "C", "legacy"], default="C")
+    parser.add_argument("--config")
     return parser.parse_args()
 
 
@@ -211,7 +215,7 @@ def decompose_guidance(reference, observation, alignment_error):
     return photographer, subject
 
 
-def analyze(reference, observation, guide_transform=None):
+def legacy_analyze(reference, observation, guide_transform=None):
     transform = guide_transform or {}
     transformed = transformed_reference(reference, transform)
     alignment_error = compute_alignment_error(transformed, observation)
@@ -226,12 +230,21 @@ def analyze(reference, observation, guide_transform=None):
     }
 
 
+def analyze(reference, observation, guide_transform=None, condition="C", config=None):
+    if condition == "legacy":
+        return legacy_analyze(reference, observation, guide_transform)
+    transformed = transformed_reference(reference, guide_transform or {})
+    result = analyze_progressive(transformed, observation, config or load_config(), condition)
+    result["appliedGuideTransform"] = guide_transform or {}
+    return result
+
+
 def main():
     args = parse_args()
     reference = load_json(args.reference)
     observation = load_json(args.observation)
     guide_transform = json.loads(args.guide_transform) if args.guide_transform else {}
-    result = analyze(reference, observation, guide_transform)
+    result = analyze(reference, observation, guide_transform, args.condition, load_config(args.config))
     text = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         output_path = Path(args.output)

@@ -1,9 +1,14 @@
+const { ExperimentFlow } = require("./experiment_flow");
+const { PROTOCOL, referenceFromPose, compareGuidance } = require("./research_guidance");
 const express = require("express");
 const multer = require("multer");
 const path = require("path");
+const guidanceConfigPath = process.env.GUIDANCE_CONFIG || path.join(__dirname, "guide_processor", "guidance_config.json");
 const fs = require("fs");
 const cors = require("cors");
 const { createServer } = require("http");
+const {shouldExpire,writeQuality,retained}=require("./research_data");
+const {referenceForPlan}=require("./experiment_validation");
 const { execFileSync } = require("child_process");
 const { randomUUID } = require("crypto");
 const { WebSocket, WebSocketServer } = require("ws");
@@ -46,7 +51,7 @@ function safeSessionId(value, fallback = "default") {
 
 const storage = multer.diskStorage({
   destination(req, file, cb) {
-    const sessionId = safeSessionId(req.body.sessionId || req.params?.sessionId);
+    const sessionId = safeSessionId(req.flowCapture ? req.params.sessionId : req.body.sessionId || req.params?.sessionId);
     const dataType =
       file.fieldname === "guide"
         ? "guides"
@@ -67,7 +72,7 @@ const storage = multer.diskStorage({
     const isGuide = file.fieldname === "guide";
     const isReference = file.fieldname === "reference";
     const isDraft = file.fieldname === "draft";
-    const draftClientId = isDraft ? safeIdentifier(req.body.clientId) : "";
+    const draftClientId = isDraft ? safeIdentifier(req.flowCapture?.clientId || req.body.clientId) : "";
     if (draftClientId) {
       cb(null, `draft_${draftClientId}.jpg`);
       return;
@@ -299,6 +304,7 @@ function appendTrialEvents(sessionId, trialId, events, defaults = {}) {
     pairId: trial.pairId,
     sessionId,
     conditionId: trial.conditionId,
+    guidanceProtocolVersion: trial.guidanceProtocolVersion || "legacy-v1",
     trialId,
     role: event.role || defaults.role || "system",
     eventType: requiredString(event.eventType, "eventType"),
@@ -461,7 +467,7 @@ function runLiveFeaturesExtractor(inputPath, outputPath, sessionId, trialId = ""
   });
 }
 
-function runRoleGuidance(referencePath, observationPath, outputPath, guideTransform = {}) {
+function runRoleGuidance(referencePath, observationPath, outputPath, guideTransform = {}, condition = "B", configPath = guidanceConfigPath) {
   const scriptPath = path.join(__dirname, "guide_processor", "role_guidance.py");
   const pythonCommand = process.env.PYTHON || "python3";
   execFileSync(
@@ -476,6 +482,8 @@ function runRoleGuidance(referencePath, observationPath, outputPath, guideTransf
       outputPath,
       "--guide-transform",
       JSON.stringify(guideTransform || {}),
+      "--condition", condition,
+      "--config", configPath,
     ],
     { stdio: ["ignore", "pipe", "pipe"] }
   );
@@ -657,11 +665,105 @@ function copyGuideFeaturesToSession(sessionId, guideId, featuresUrl) {
   return true;
 }
 
+function freezeTrialReference(sessionId, trial, referencePose) {
+  const trialId = trial.trialId;
+  if (!referencePose) throw new Error("参照姿勢を保存してから試行を作成してください");
+  trial.guideId = `trial_${trialId}`;
+  const reference = referenceFromPose(referencePose, trial.guideId);
+  const referencePath = getGuideFeaturesPath(sessionId, trial.guideId);
+  writeJsonFile(referencePath, reference);
+  trial.guidanceConfig = readJsonFile(guidanceConfigPath);
+  const trialConfigPath = path.join(getTrialDir(sessionId, trialId), "guidance-config.json");
+  writeJsonFile(trialConfigPath, trial.guidanceConfig);
+  const overlayName = `${trial.guideId}.png`;
+  const overlayPath = path.join(getDataDir(sessionId, "guides"), overlayName);
+  fs.mkdirSync(path.dirname(overlayPath), { recursive: true });
+  execFileSync(process.env.PYTHON || "python3", [path.join(__dirname, "guide_processor", "render_reference_guide.py"), referencePath, overlayPath, trialConfigPath], { stdio: ["ignore", "pipe", "pipe"] });
+  trial.guideUrl = makeFileUrl(sessionId, overlayName, "guides");
+  trial.referenceImageUrl = referencePose.image.url;
+}
+
+const validatedReferenceRenders=new Set();
+function preparePlanReference(item, sessionId) {
+  const config=readJsonFile(guidanceConfigPath);
+  const {pose,source,reference}=referenceForPlan(uploadRoot,item,config);
+  if (!sessionId) {
+    const key=JSON.stringify({reference,config,python:process.env.PYTHON});
+    if(!validatedReferenceRenders.has(key)){
+      const temp=fs.mkdtempSync(path.join(require("node:os").tmpdir(),"plan-render-"));
+      try {const input=path.join(temp,"reference.json"),output=path.join(temp,"guide.png");writeJsonFile(input,reference);
+        execFileSync(process.env.PYTHON||"python3",[path.join(__dirname,"guide_processor/render_reference_guide.py"),input,output,guidanceConfigPath],{timeout:30000,stdio:["ignore","pipe","pipe"]});
+        if(!fs.existsSync(output)||fs.statSync(output).size===0)throw Error("empty guide");
+        validatedReferenceRenders.add(key);
+      } catch {throw Object.assign(new Error("ReferenceGuideを生成できません。Pythonと設定を確認してください"),{code:"reference_guide_render_failed"});}
+      finally{fs.rmSync(temp,{recursive:true,force:true});}
+    }
+    return pose;
+  }
+  const filename = `${randomUUID()}.jpg`;
+  const target = path.join(getDataDir(sessionId,"references"),filename);
+  fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(source,target);
+  return {...pose,image:{filename,url:makeFileUrl(sessionId,filename,"references")}};
+}
+
+const participantFlow = new ExperimentFlow({
+  sessionDir:getSessionDir,read:readJsonFile,write:writeJsonFile,loadTrial,saveTrial,loadSession:loadExperimentSession,
+  saveSession:saveExperimentSession,log:appendTrialEvents,notify:notifySession,
+  planDir:process.env.EXPERIMENT_PLAN_DIR || path.join(__dirname,"experiment_plans"),
+  config:readJsonFile(process.env.EXPERIMENT_FLOW_CONFIG || path.join(__dirname,"experiment_flow_config.json")),
+  prepareReference:preparePlanReference,
+  createTrial(sessionId,item,index,totalTrials) {
+    const session=loadExperimentSession(sessionId),pose=preparePlanReference(item,sessionId);
+    const trial={schemaVersion:"1.0",guidanceProtocolVersion:PROTOCOL,flowProtocolVersion:"participant-flow-v1",trialId:randomUUID(),sessionId,
+      participantId:session.participantId,pairId:session.pairId,conditionId:item.condition,referenceImageId:item.referenceImageId,
+      referencePoseVersion:pose.versionId,isPractice:item.isPractice,trialIndex:index,totalTrials,maximumCaptureCount:item.maximumCaptureCount,
+      supportLevel:2,state:"configured",startTime:null,endTime:null,finalPhotoId:null};
+    freezeTrialReference(sessionId,trial,pose);saveTrial(sessionId,trial);return trial;
+  },
+  quality:s=>writeQuality(getSessionDir(s)),
+  analysis:(s,id)=>readJsonFile(path.join(getAnalysisDir(s),"history",`${safeIdentifier(id)}.json`)),
+  photoUrl(s,id) { return makeFileUrl(s,id,fs.existsSync(path.join(getDataDir(s,"photos"),id))?"photos":"drafts"); },
+  sharePhoto(s,id) {
+    const destination=path.join(getDataDir(s,"photos"),id);fs.mkdirSync(path.dirname(destination),{recursive:true});
+    if(!fs.existsSync(destination))fs.copyFileSync(path.join(getDataDir(s,"drafts"),id),destination);
+    notifySession(s,{type:"photos-updated",sessionId:s});
+  },
+  runAnalysis(s,t,c) {
+    const request={flowInternal:true,params:{sessionId:s,photoId:c.photoId},body:{trialId:t.trialId,guideId:t.guideId,clientId:c.clientId,captureSequence:c.captureSequence,captureTimestamp:c.captureTimestamp}};
+    const response={status(code){this.statusCode=code;return this;},json(value){if(value.success===false)participantFlow.analysisDone(s,{...request.body,analysisStatus:"failed",errorReason:value.error});return this;}};
+    analyzeCapturedPhoto(request,response,error=>participantFlow.analysisDone(s,{...request.body,analysisId:error.analysisId,analysisStatus:"failed",errorReason:error.message}));
+  }
+});
+
 app.use(cors());
 app.use(express.json());
 
+participantFlow.register(app);
+// Researcher-only details; disabled unless an administrator secret is configured.
+app.use("/api/research",(req,res,next)=>{
+  if(!process.env.RESEARCH_ADMIN_TOKEN||req.get("X-Research-Token")!==process.env.RESEARCH_ADMIN_TOKEN)return res.sendStatus(403);
+  res.set("Cache-Control","no-store");next();
+});
+app.get("/api/research/plans/validation",(req,res,next)=>{try{res.json({plans:participantFlow.planReports()});}catch(e){next(e);}});
+app.get("/api/research/sessions/:sessionId/summary",(req,res,next)=>{try{if(!participantFlow.load(req.params.sessionId))return res.sendStatus(404);res.json(writeQuality(getSessionDir(req.params.sessionId)));}catch(e){next(e);}});
+app.post("/api/research/sessions/:sessionId/terminate",(req,res,next)=>{try{const f=participantFlow.load(req.params.sessionId);if(!f)return res.sendStatus(404);if(!["technical_failure","researcher_terminated"].includes(req.body.status))return res.sendStatus(400);participantFlow.terminate(f,req.body.status,req.body.status);res.json({success:true});}catch(e){next(e);}});
+// Managed participant sessions only accept their flow API and reserved draft uploads.
+app.use("/api",(req,res,next)=>{
+  const match=req.path.match(/^\/(?:session|sessions|experiments\/sessions)\/([^/]+)/);
+  const sid=match?.[1] || req.body?.sessionId || req.query.sessionId;
+  if(sid && retained(getSessionDir(sid))) {
+    const draft=req.method==="POST" && /^\/sessions\/[^/]+\/draft-photos$/.test(req.path);
+    if(req.path.endsWith("/events") || (req.method!=="GET" && !draft)) return res.status(403).json({success:false,error:"参加者用の実験画面から操作してください"});
+  }
+  next();
+});
+
 // アップロード画像を配信
-app.use("/uploads", express.static(uploadRoot));
+app.use("/uploads", (req,res,next)=>{
+  const parts=decodeURIComponent(req.path).split("/").filter(Boolean);
+  if(parts[0] && retained(getSessionDir(parts[0])) && ["experiment","analysis"].includes(parts[1])) return res.sendStatus(403);
+  next();
+}, express.static(uploadRoot));
 
 // photographer の静的ファイルを配信
 app.use(express.static(photographerDir));
@@ -735,7 +837,7 @@ function cleanupExpiredSessions() {
       continue;
     }
 
-    if (now - stat.mtimeMs >= sessionTtlMs) {
+    if (shouldExpire(sessionDir,now,sessionTtlMs)) {
       fs.rmSync(sessionDir, { recursive: true, force: true });
       notifySession(entry.name, {
         type: "session-deleted",
@@ -922,6 +1024,7 @@ app.post("/api/experiments/sessions", (req, res, next) => {
       sessionId,
       participantId,
       pairId,
+      guidanceProtocolVersion: PROTOCOL,
       conditionId,
       referenceImageId: String(req.body.referenceImageId || "").trim() || null,
       supportLevel: Number(req.body.supportLevel || 1),
@@ -1021,6 +1124,7 @@ app.post("/api/experiments/sessions/:sessionId/trials", (req, res, next) => {
 
     const now = new Date().toISOString();
     const trialId = safeIdentifier(req.body.trialId) || randomUUID();
+    if (loadTrial(sessionId, trialId)) return res.status(409).json({ success: false, error: "trialId already exists" });
     const referenceImageId =
       String(req.body.referenceImageId || experiment.referenceImageId || "").trim() || null;
     const referencePose = referenceImageId
@@ -1043,6 +1147,7 @@ app.post("/api/experiments/sessions/:sessionId/trials", (req, res, next) => {
       });
     }
     const trial = {
+      guidanceProtocolVersion: experiment.guidanceProtocolVersion || "legacy-v1",
       schemaVersion: "1.0",
       trialId,
       sessionId,
@@ -1063,6 +1168,9 @@ app.post("/api/experiments/sessions/:sessionId/trials", (req, res, next) => {
       updatedAt: now,
     };
 
+    if (trial.guidanceProtocolVersion === PROTOCOL) {
+      freezeTrialReference(sessionId, trial, referencePose);
+    }
     saveTrial(sessionId, trial);
     experiment.currentTrialId = trialId;
     experiment.status = "configured";
@@ -1447,6 +1555,7 @@ app.put(
 // 撮影直後解析用の下書き写真。iOSへはまだ共有しない。
 app.post(
   "/api/sessions/:sessionId/draft-photos",
+  (req,res,next)=>participantFlow.uploadGuard(req,res,next),
   upload.single("draft"),
   (req, res, next) => {
     try {
@@ -1459,12 +1568,13 @@ app.post(
       }
 
       const photoId = req.file.filename;
-      const trialId = safeIdentifier(req.body.trialId);
-      const clientId = safeIdentifier(req.body.clientId);
-      const captureSequence = parseOptionalInteger(req.body.captureSequence);
-      const captureTimestamp = parseTimestamp(req.body.captureTimestamp);
-      const guideId = safeIdentifier(req.body.guideId);
+      const trialId = req.flowCapture?.trialId ?? safeIdentifier(req.body.trialId);
+      const clientId = req.flowCapture?.clientId ?? safeIdentifier(req.body.clientId);
+      const captureSequence = req.flowCapture?.captureSequence ?? parseOptionalInteger(req.body.captureSequence);
+      const captureTimestamp = req.flowCapture?.captureTimestamp ?? parseTimestamp(req.body.captureTimestamp);
+      const guideId = req.flowCapture?.guideId ?? safeIdentifier(req.body.guideId);
       const guideTransform = parseGuideTransform(req.body.guideTransform);
+      participantFlow.captured(sessionId,photoId,{captureSequence,clientId});
       if (trialId) {
         try {
           appendTrialEvents(sessionId, trialId, [{
@@ -1913,7 +2023,7 @@ app.get("/api/guides/:guideId/features", (req, res) => {
   });
 });
 
-app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) => {
+function analyzeCapturedPhoto(req, res, next) {
   const context = {
     analysisId: `analysis_${randomUUID()}`,
     sessionId: safeSessionId(req.params.sessionId, ""),
@@ -1927,7 +2037,16 @@ app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) =>
   };
   const guideTransform = parseGuideTransform(req.body.guideTransform);
 
-  notifySession(context.sessionId, {
+  const experiment = loadExperimentSession(context.sessionId);
+  const trial = context.trialId ? loadTrial(context.sessionId, context.trialId) : null;
+  if (experiment && (!trial || experiment.currentTrialId !== context.trialId || trial.state !== "running")) {
+    return res.status(409).json({ success: false, error: "active running trial is required" });
+  }
+  if (trial?.guidanceProtocolVersion === PROTOCOL &&
+      (context.guideId !== trial.guideId || context.captureSequence === null || context.captureTimestamp === null)) {
+    return res.status(409).json({ success: false, error: "frozen trial guide and capture metadata are required" });
+  }
+  if (!participantFlow.load(context.sessionId)) notifySession(context.sessionId, {
     type: "analysisStarted",
     ...analysisEventPayload(context),
     guideTransform,
@@ -1961,6 +2080,8 @@ app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) =>
       throw error;
     }
 
+    const progressive = !experiment || trial?.guidanceProtocolVersion === PROTOCOL;
+    const condition = trial?.conditionId || "B";
     const referencePath = findGuideFeaturesPath(sessionId, guideId);
     if (!referencePath) {
       const error = new Error("reference guide features not found");
@@ -1971,7 +2092,11 @@ app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) =>
     const observationPath = getObservationPath(sessionId, photoId);
     const guidancePath = getRoleGuidancePath(sessionId, photoId);
     runLiveFeaturesExtractor(photoPath, observationPath, sessionId, trialId, "capturedPhoto");
-    runRoleGuidance(referencePath, observationPath, guidancePath, guideTransform);
+    const appliedTransform = trial?.guidanceProtocolVersion === PROTOCOL ? {} : guideTransform;
+    const configPath = trial?.guidanceProtocolVersion === PROTOCOL
+      ? path.join(path.dirname(getTrialPath(sessionId, trialId)), "guidance-config.json") : guidanceConfigPath;
+    if (trial?.guidanceProtocolVersion === PROTOCOL) writeJsonFile(configPath, trial.guidanceConfig);
+    runRoleGuidance(referencePath, observationPath, guidancePath, appliedTransform, progressive ? condition : "legacy", configPath);
 
     const referenceGuide = readJsonFile(referencePath);
     const liveObservation = readJsonFile(observationPath);
@@ -1983,7 +2108,11 @@ app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) =>
         analysisEndTimestamp,
         guideId: referenceGuide?.guideId || guideId || null,
       }),
-      guideTransform,
+      ...roleGuidance,
+      conditionId: condition,
+      guidanceProtocolVersion: progressive ? PROTOCOL : "legacy-v1",
+      referencePoseVersion: trial?.referencePoseVersion || null,
+      guideTransform: appliedTransform,
       referenceGuide,
       liveObservation,
       alignmentError: roleGuidance.alignmentError,
@@ -1993,7 +2122,13 @@ app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) =>
       analysisStatus: "completed",
       errorReason: null,
     };
+    const statePath = path.join(getAnalysisDir(sessionId), `progress_${safeIdentifier(trialId || "normal")}_${safeIdentifier(guideId)}.json`);
+    const previous = readJsonFile(statePath);
+    payload.guidanceProgress = compareGuidance(previous, payload);
+    payload.isLatestAnalysis = !previous || (Number.isSafeInteger(payload.captureSequence) && payload.captureSequence > previous.captureSequence);
     writeJsonFile(guidancePath, payload);
+    writeJsonFile(path.join(getAnalysisDir(sessionId), "history", `${context.analysisId}.json`), payload);
+    if (payload.isLatestAnalysis) writeJsonFile(statePath, payload);
 
     if (trialId) {
       try {
@@ -2001,21 +2136,8 @@ app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) =>
           role: "system",
           eventType: "role_guidance_analyzed",
           payload: {
-            analysisId: context.analysisId,
-            clientId: context.clientId || null,
-            captureSequence: context.captureSequence,
-            captureTimestamp: context.captureTimestamp,
-            analysisStartTimestamp: context.analysisStartTimestamp,
-            analysisEndTimestamp,
-            guideId: payload.guideId,
-            photoId,
-            guideTransform,
-            alignmentError: roleGuidance.alignmentError,
-            roleDecomposition: {
-              photographerGuidance: roleGuidance.photographerGuidance,
-              subjectGuidance: roleGuidance.subjectGuidance,
-            },
-            ready: roleGuidance.ready,
+            ...payload, referenceGuide: undefined, liveObservation: undefined,
+            roleDecomposition: { photographerGuidance: payload.photographerGuidance, subjectGuidance: payload.subjectGuidance },
           },
         }]);
       } catch (error) {
@@ -2023,24 +2145,27 @@ app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) =>
       }
     }
 
-    notifySession(sessionId, {
-      type: "alignmentResult",
-      ...analysisEventPayload(context, { analysisEndTimestamp }),
-      alignmentError: roleGuidance.alignmentError,
-    });
-    notifySession(sessionId, {
-      type: "roleGuidanceUpdated",
-      ...payload,
-      referenceGuide: undefined,
-      liveObservation: undefined,
-    });
-    notifySession(sessionId, {
-      type: "readyStateUpdated",
-      ...analysisEventPayload(context, { analysisEndTimestamp }),
-      ready: roleGuidance.ready,
-    });
+    participantFlow.analysisDone(sessionId,payload);
+    if (!participantFlow.load(sessionId) && condition !== "A" && payload.isLatestAnalysis) {
+      notifySession(sessionId, {
+        type: "alignmentResult",
+        ...analysisEventPayload(context, { analysisEndTimestamp }),
+        alignmentError: roleGuidance.alignmentError,
+      });
+      notifySession(sessionId, {
+        type: "roleGuidanceUpdated",
+        ...payload,
+        referenceGuide: undefined,
+        liveObservation: undefined,
+      });
+      notifySession(sessionId, {
+        type: "readyStateUpdated",
+        ...analysisEventPayload(context, { analysisEndTimestamp }),
+        ready: roleGuidance.ready,
+      });
 
-    res.json(payload);
+    }
+    res.json(condition === "A" ? { ...analysisEventPayload(context), success: true, conditionId: "A", analysisStatus: "completed", guidanceSuppressed: true } : payload);
   } catch (error) {
     console.error("photo analysis failed:", error);
     const analysisEndTimestamp = Date.now();
@@ -2054,7 +2179,8 @@ app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) =>
       analysisStatus: "failed",
       errorReason: error.message || "analysis failed",
     });
-    notifySession(context.sessionId, {
+    participantFlow.analysisDone(context.sessionId,failedPayload);
+    if (!participantFlow.load(context.sessionId)) notifySession(context.sessionId, {
       type: "analysisFailed",
       ...failedPayload,
     });
@@ -2072,7 +2198,8 @@ app.post("/api/sessions/:sessionId/photos/:photoId/analyze", (req, res, next) =>
     error.analysisId = context.analysisId;
     next(error);
   }
-});
+}
+app.post("/api/sessions/:sessionId/photos/:photoId/analyze", analyzeCapturedPhoto);
 
 app.post("/api/sessions/:sessionId/analyze-frame", upload.single("frame"), (req, res, next) => {
   let context = null;

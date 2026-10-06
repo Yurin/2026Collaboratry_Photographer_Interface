@@ -4,7 +4,14 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test:session-flow": "node test/session-flow.test.js"
+    "test:session-flow": "node test/session-flow.test.js",
+    "test:guidance": "node test/research-guidance.test.js && node test/guidance-ui.test.js && node test/progressive-flow.test.js",
+    "test:participant-flow": "node test/participant-flow.test.js && node test/participant-ui.test.js && node test/participant-http.test.js",
+    "export:experiment-data": "node experiment_tools.js export",
+    "backup:experiments": "node experiment_tools.js backup",
+    "check:experiment-ready": "node experiment_tools.js check",
+    "summary:experiments": "node experiment_tools.js summary",
+    "test:research-operations": "node test/research-data.test.js"
   },
   "dependencies": {
     "cors": "^2.8.6",

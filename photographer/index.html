@@ -34,6 +34,10 @@
         </section>
 
         <section class="controls">
+          <details id="trialReferencePanel" hidden>
+            <summary>参照写真を確認</summary>
+            <img id="trialReferenceImage" alt="この試行の参照写真" style="width:100%;max-height:320px;object-fit:contain" />
+          </details>
           <div id="supportPanel" class="support-panel" aria-live="polite" hidden>
             <div class="support-label">撮影サポート</div>
             <div id="supportMessage" class="support-message"></div>
@@ -134,6 +138,7 @@
     <canvas id="canvas"></canvas>
   </main>
 
+  <script src="participant-flow.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

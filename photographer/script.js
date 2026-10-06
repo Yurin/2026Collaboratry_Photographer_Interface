@@ -79,6 +79,9 @@ let experimentCondition = null;
 let currentTrialId = null;
 let currentTrialState = null;
 let activeGuideId = null;
+let guidanceProtocolVersion = null;
+let trialGuide = null;
+let lastGuidanceDisplay = null;
 let verifiedGuideIds = new Set();
 let latestRoleGuidance = null;
 let captureSequence = 0;
@@ -128,6 +131,7 @@ function clearError() {
 }
 
 function showActionHint(message) {
+  window.participantFlowUI?.showError(message);
   errorPanel.textContent = message;
   errorPanel.hidden = false;
 }
@@ -190,7 +194,7 @@ function showSupportMessage(message, options = {}) {
 }
 
 function photographerGuidanceEnabled() {
-  return experimentCondition !== "A";
+  return !window.participantFlowUI && experimentCondition !== "A";
 }
 
 function nowTimestamp() {
@@ -269,7 +273,7 @@ function logReadyTransitions(record, payload, timestamp) {
 }
 
 function displayCompletedAnalysis(record, payload) {
-  if (!shouldDisplayAnalysisPayload(payload, record)) return false;
+  if (!photographerGuidanceEnabled() || payload.guidanceSuppressed || !shouldDisplayAnalysisPayload(payload, record)) return false;
   const timestamp = nowTimestamp();
   const analysisId = payload.analysisId || record.analysisId || null;
   const isFirstDisplay = record.displayedAnalysisId !== analysisId;
@@ -279,11 +283,16 @@ function displayCompletedAnalysis(record, payload) {
   record.displayedAnalysisId = analysisId;
   renderRoleGuidance(payload);
   if (isFirstDisplay) {
+    lastGuidanceDisplay = { analysisId, timestamp, trialId: record.trialId, guideId: record.guideId };
     logReadyTransitions(record, payload, timestamp);
     logAnalysisEvent(record, "photographer_guidance_displayed", {
       analysisId,
       webGuidanceDisplayTimestamp: record.webGuidanceDisplayTimestamp,
       photographerGuidance: payload.photographerGuidance || [],
+      conditionId: payload.conditionId,
+      selectedGuidance: payload.photographerGuidance || [],
+      targetRole: "photographer",
+      guidanceProtocolVersion: payload.guidanceProtocolVersion,
       ready: payload.ready || {},
     });
   }
@@ -305,7 +314,8 @@ function renderRoleGuidance(payload = latestRoleGuidance) {
 
   roleGuidancePanel.hidden = false;
   roleGuidancePhoto.textContent = payload.photoId ? `写真: ${payload.photoId}` : "";
-  analysisState.textContent = payload.analysisState || "解析済み";
+  const resolved = (payload.guidanceProgress || []).filter((p) => p.wasSelected && p.newlyResolved && p.targetRole === "photographer").length;
+  analysisState.textContent = payload.analysisState || (resolved ? "前の修正が完了 → 次の修正" : "現在の修正");
   photographerGuidanceList.innerHTML = "";
 
   const guidance = Array.isArray(payload.photographerGuidance)
@@ -313,7 +323,7 @@ function renderRoleGuidance(payload = latestRoleGuidance) {
     : [];
   const messages = guidance.length > 0
     ? guidance
-    : [{ message: payload.errorMessage || "解析できませんでした", severity: "low" }];
+    : [{ message: payload.errorMessage || (payload.ready?.framingReady ? "構図はOKです" : "解析できませんでした"), severity: "low" }];
   messages.forEach((item) => {
     const row = document.createElement("li");
     row.textContent = item.message;
@@ -365,6 +375,7 @@ function showAnalysisFailure(photoId = null, errorReason = null) {
 
 function applySessionGuide(guideState) {
   if (!guideState) return;
+  if (trialGuide) guideState = trialGuide;
   const nextGuideId = guideState.guideId || null;
   if (activeGuideId !== nextGuideId) {
     latestRoleGuidance = null;
@@ -379,6 +390,8 @@ function applySessionGuide(guideState) {
 function applyExperimentState(experiment) {
   if (!experiment) {
     experimentCondition = null;
+    guidanceProtocolVersion = null;
+    trialGuide = null;
     currentTrialId = null;
     currentTrialState = null;
     experimentStatus.hidden = true;
@@ -389,16 +402,34 @@ function applyExperimentState(experiment) {
     return;
   }
 
-  experimentCondition = experiment.conditionId;
+  const nextTrialId = experiment.currentTrial?.trialId || experiment.currentTrialId || null;
+  if (currentTrialId !== nextTrialId || experimentCondition !== experiment.conditionId) {
+    latestRoleGuidance = null;
+    latestDisplayedCaptureSequence = null;
+    lastDisplayedReady = {};
+    lastGuidanceDisplay = null;
+  }
+  guidanceProtocolVersion = experiment.guidanceProtocolVersion;
+  trialGuide = guidanceProtocolVersion === "progressive-v1" && experiment.currentTrial?.guideId
+    ? { guideId: experiment.currentTrial.guideId, url: experiment.currentTrial.guideUrl } : null;
+  experimentCondition = experiment.currentTrial?.conditionId || experiment.conditionId;
+  if (trialGuide) {
+    applySessionGuide(trialGuide);
+    applyGuideTransform({ offsetX: 0, offsetY: 0, scale: 1, opacity: guideTransform.opacity });
+  }
+  const referencePanel = document.getElementById("trialReferencePanel");
+  const referenceImage = document.getElementById("trialReferenceImage");
+  referencePanel.hidden = !experiment.currentTrial?.referenceImageUrl;
+  if (!referencePanel.hidden) referenceImage.src = experiment.currentTrial.referenceImageUrl;
   currentTrialId = experiment.currentTrial?.trialId || experiment.currentTrialId || null;
   currentTrialState = experiment.currentTrial?.state || experiment.status || null;
   experimentStatus.textContent = currentTrialId
     ? `実験撮影・試行 ${currentTrialState || "準備中"}`
     : "実験撮影・試行準備中";
-  experimentStatus.hidden = false;
+  experimentStatus.hidden = Boolean(window.participantFlowUI);
 
   const photographerSupportEnabled =
-    experimentCondition === "B" || experimentCondition === "C";
+    guidanceProtocolVersion === "progressive-v1" || experimentCondition === "B" || experimentCondition === "C";
   guideControls.forEach((element) => {
     element.hidden = !photographerSupportEnabled;
   });
@@ -471,6 +502,7 @@ function persistPendingEvents() {
 }
 
 async function logExperimentEvent(eventType, payload = {}, trialId = currentTrialId) {
+  if (window.participantFlowUI) return;
   const event = makeEvent(eventType, payload, trialId);
   if (!trialId) {
     try {
@@ -563,20 +595,22 @@ function connectSessionSocket(isReconnect = false) {
     clearError();
     setConnectionState("connected");
     logExperimentEvent("session_socket_connected");
+    if(isReconnect)void window.participantFlowUI?.diagnostic?.("websocket_reconnect");
   });
 
   wsSession.addEventListener("message", (event) => {
     try {
       const payload = JSON.parse(event.data);
+      if (payload.type === "experiment-flow-updated") { void window.participantFlowUI?.refresh(); return; }
 
       if (payload.type === "guide-updated" && payload.guide?.url) {
-        if (experimentCondition !== "A") {
+        if (guidanceProtocolVersion === "progressive-v1" || experimentCondition !== "A") {
           applySessionGuide(payload.guide);
         }
       }
 
       if (payload.type === "guide-transform" && payload.transform) {
-        if (experimentCondition !== "A") {
+        if (!trialGuide && experimentCondition !== "A") {
           applyGuideTransform(payload.transform);
           showSupportMessage("ガイドが調整されました。", { autoHideMs: 2500 });
         }
@@ -1010,7 +1044,7 @@ async function startCamera() {
   } catch (error) {
     console.error(error);
     showActionHint(
-      "カメラを起動できませんでした。権限を許可してから、画面上の『ライブ共有』や『撮影』をお試しください。"
+      window.participantFlowUI ? "カメラを起動できませんでした。ブラウザのカメラ権限を許可して『カメラを接続し直す』を押してください。" : "カメラを起動できませんでした。権限を許可してから、画面上の『ライブ共有』や『撮影』をお試しください。"
     );
     logExperimentEvent("camera_failed", { message: error.message });
   }
@@ -1052,13 +1086,16 @@ shareLiveBtn.addEventListener("click", () => {
   }
 });
 
-captureBtn.addEventListener("click", () => {
+captureBtn.addEventListener("click", async () => {
   if (!video.videoWidth || !video.videoHeight) {
     showActionHint(
       "『撮影』はカメラ映像が見えてから使えます。映像が表示されるまで少し待ってから、もう一度押してください。"
     );
     return;
   }
+
+  const flowCapture = window.participantFlowUI ? await window.participantFlowUI.beginCapture() : null;
+  if (window.participantFlowUI && !flowCapture) return;
 
   const outputWidth = 900;
   const outputHeight = 1200;
@@ -1084,18 +1121,18 @@ captureBtn.addEventListener("click", () => {
   const imageUrl = canvas.toDataURL("image/jpeg", 0.92);
   const captureTimestamp = nowTimestamp();
   const record = {
-    clientId:
+    clientId: flowCapture?.clientId ||
       crypto.randomUUID?.() ||
       `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     imageUrl,
-    captureSequence: nextCaptureSequence(),
+    captureSequence: flowCapture?.captureSequence ?? nextCaptureSequence(),
     captureTimestamp,
     draftPhotoId: null,
     draftStatus: "uploading",
     deleted: false,
     uploadPromise: null,
     analysisPromise: null,
-    analysisStatus: photographerGuidanceEnabled() ? "waiting" : "skippedCondition",
+    analysisStatus: (photographerGuidanceEnabled() || guidanceProtocolVersion === "progressive-v1") ? "waiting" : "skippedCondition",
     analysisStartTimestamp: null,
     analysisEndTimestamp: null,
     analysisId: null,
@@ -1110,6 +1147,7 @@ captureBtn.addEventListener("click", () => {
     analysisPayload: null,
     errorReason: null,
     guideId: activeGuideId,
+    conditionId: experimentCondition,
     trialId: currentTrialId,
     guideTransform: {
       translationX: guideTransform.offsetX,
@@ -1132,7 +1170,9 @@ captureBtn.addEventListener("click", () => {
     }
   }
 
-  logExperimentEvent("photo_captured", {
+  if (!window.participantFlowUI) logExperimentEvent("photo_captured", {
+    previousDisplayedAnalysisId: lastGuidanceDisplay?.trialId === record.trialId && lastGuidanceDisplay?.guideId === record.guideId ? lastGuidanceDisplay.analysisId : null,
+    guidanceToNextCaptureMs: lastGuidanceDisplay?.trialId === record.trialId && lastGuidanceDisplay?.guideId === record.guideId ? captureTimestamp - lastGuidanceDisplay.timestamp : null,
     shotCount: photos.length,
     clientPhotoId: record.clientId,
     clientId: record.clientId,
@@ -1222,7 +1262,7 @@ window.addEventListener("resize", () => {
 });
 
 async function updateSessionGuide() {
-  if (!sessionId || experimentCondition === "A") return;
+  if (!sessionId || (experimentCondition === "A" && guidanceProtocolVersion !== "progressive-v1")) return;
 
   try {
     const response = await fetch(`${API_BASE_PATH}/session/${encodeURIComponent(sessionId)}/guide`);
@@ -1345,6 +1385,10 @@ async function analyzeCapturedRecord(record) {
     record.analysisPayload = result;
     displayCompletedAnalysis(record, result);
     logAnalysisEvent(record, "photo_analysis_completed", {
+      guidanceCandidates: result.guidanceCandidates,
+      selectedGuidance: result.selectedGuidance,
+      guidanceProgress: result.guidanceProgress,
+      readyThresholds: result.readyThresholds,
       alignmentError: result.alignmentError,
       photographerGuidance: result.photographerGuidance,
       subjectGuidance: result.subjectGuidance,
@@ -1388,7 +1432,7 @@ async function uploadDraftAndAnalyze(record) {
     formData.append("draft", dataURLtoBlob(record.imageUrl), "captured_photo.jpg");
     const response = await fetchWithRetry(
       `${API_BASE_PATH}/sessions/${encodeURIComponent(sessionId)}/draft-photos`,
-      { method: "POST", body: formData },
+      { method: "POST", body: formData, headers: window.participantFlowUI?.uploadHeaders(record) || {} },
       { timeoutMs: DRAFT_UPLOAD_TIMEOUT_MS, attempts: 2 }
     );
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -1402,6 +1446,7 @@ async function uploadDraftAndAnalyze(record) {
       await deleteDraftPhoto(record);
       return;
     }
+    if (window.participantFlowUI) { await window.participantFlowUI.uploadFinished(); return; }
     if (record.analysisStatus === "skippedCondition") return;
     record.analysisPromise = analyzeCapturedRecord(record);
   } catch (error) {
@@ -1774,6 +1819,6 @@ function dataURLtoBlob(dataURL) {
 }
 
 updatePhotoCount();
-showCaptureView();
+if (!window.participantFlowUI) showCaptureView();
 loadSessionFromUrl();
-startCamera();
+if (!window.participantFlowUI) startCamera();
