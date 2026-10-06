@@ -16,9 +16,9 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("PHOTO GUIDE")
-                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .font(.system(size: 34, weight: .bold, design: .serif))
                         .tracking(-1.2)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(AppStyle.primaryText)
 
                     Text("ふたりで、狙った一枚を。")
                         .font(.title3.weight(.bold))
@@ -138,8 +138,8 @@ struct SceneTemplateView: View {
                 .foregroundStyle(AppStyle.secondaryText)
 
             Text("シーンからガイドを選ぶ")
-                .font(.system(size: 28, weight: .black, design: .rounded))
-                .foregroundStyle(.white)
+                .font(.system(size: 28, weight: .bold, design: .serif))
+                .foregroundStyle(AppStyle.primaryText)
 
             Text("参照写真がない時でも、定番の構図ガイドを選んでそのまま撮影に進めます。")
                 .font(.subheadline)
@@ -160,7 +160,7 @@ struct SceneTemplateView: View {
                             .foregroundStyle(selectedSceneID == scene.id ? Color.black : AppStyle.primaryText)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
-                            .background(selectedSceneID == scene.id ? Color.white : AppStyle.surface)
+                            .background(selectedSceneID == scene.id ? AppStyle.accent : AppStyle.surface)
                             .clipShape(Capsule())
                             .overlay {
                                 Capsule().stroke(AppStyle.border, lineWidth: selectedSceneID == scene.id ? 0 : 1)
@@ -501,11 +501,11 @@ struct HomeActionCard: View {
         }
         .frame(maxWidth: .infinity, minHeight: 138, alignment: .topLeading)
         .padding(14)
-        .background(isPrimary ? Color.white : AppStyle.surface)
+        .background(isPrimary ? AppStyle.accent : AppStyle.surface)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(isPrimary ? Color.clear : AppStyle.border, lineWidth: 1)
+                .stroke(AppStyle.border, lineWidth: 1)
         }
     }
 }
@@ -521,13 +521,13 @@ struct StepRow: View {
                 .font(.subheadline.weight(.black))
                 .foregroundStyle(.black)
                 .frame(width: 30, height: 30)
-                .background(Color.white)
+                .background(AppStyle.coral)
                 .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.headline.weight(.bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AppStyle.primaryText)
 
                 Text(description)
                     .font(.subheadline)

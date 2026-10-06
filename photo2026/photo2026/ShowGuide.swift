@@ -305,6 +305,7 @@ private struct GuideDetailView: View {
                         }
                         .frame(height: 430)
                         .tabViewStyle(.page(indexDisplayMode: .always))
+                        .foregroundStyle(.white)
                         .background(Color.black.opacity(0.92))
                         .clipShape(RoundedRectangle(cornerRadius: 16))
                     } else {
@@ -457,7 +458,7 @@ private struct GuideCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(isSelected ? Color.white : AppStyle.border, lineWidth: isSelected ? 3 : 1)
+                .stroke(isSelected ? AppStyle.primaryText : AppStyle.border, lineWidth: isSelected ? 3 : 1)
         )
     }
 }

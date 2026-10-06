@@ -95,7 +95,7 @@ struct ReceivedPhotosView: View {
                                                 .fontWeight(.semibold)
                                                 .padding(.horizontal, 14)
                                                 .padding(.vertical, 8)
-                                                .background(Color.white)
+                                                .background(AppStyle.accent)
                                                 .foregroundColor(.black)
                                                 .clipShape(Capsule())
                                         }
@@ -137,13 +137,13 @@ struct ReceivedPhotosView: View {
                                 HStack(spacing: 8) {
                                     if isSaving {
                                         ProgressView()
-                                            .tint(.white)
+                                            .tint(AppStyle.primaryText)
                                     }
                                     Text(isSaving ? "保存中..." : "すべて保存")
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 14)
-                                .background(isSaving ? AppStyle.surface : Color.white)
+                                .background(isSaving ? AppStyle.surface : AppStyle.accent)
                                 .foregroundColor(isSaving ? .secondary : .black)
                                 .clipShape(Capsule())
                             }

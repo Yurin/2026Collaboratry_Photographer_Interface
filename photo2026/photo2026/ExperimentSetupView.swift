@@ -179,7 +179,7 @@ struct ExperimentSetupView: View {
         VStack(spacing: 20) {
             Image(systemName: "lock.shield")
                 .font(.system(size: 48))
-                .foregroundStyle(.white)
+                .foregroundStyle(AppStyle.primaryText)
 
             Text("実験者用画面")
                 .font(.title2)

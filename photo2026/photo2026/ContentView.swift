@@ -34,7 +34,7 @@ struct ContentView: View {
             }
             .padding(5)
             .frame(height: 62)
-            .background(.ultraThinMaterial)
+            .background(AppStyle.surface)
             .clipShape(Capsule())
             .overlay {
                 Capsule().stroke(AppStyle.border, lineWidth: 1)
@@ -134,7 +134,7 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: 50)
-        .background(isActive ? Color.white : Color.clear)
+        .background(isActive ? AppStyle.accent : Color.clear)
         .clipShape(Capsule())
     }
 
