@@ -168,7 +168,14 @@ struct PhotoFile: Decodable {
     let url: String
 }
 
+struct GuidanceProgress: Codable {
+    let targetRole: String
+    let wasSelected: Bool
+    let newlyResolved: Bool
+}
+
 struct RoleGuidanceUpdate: Codable {
+    let guidanceProgress: [GuidanceProgress]?
     let type: String?
     let analysisId: String?
     let sessionId: String?
@@ -186,6 +193,7 @@ struct RoleGuidanceUpdate: Codable {
     let ready: ReadyState?
 
     private enum CodingKeys: String, CodingKey {
+        case guidanceProgress
         case type
         case analysisId
         case sessionId
@@ -205,6 +213,7 @@ struct RoleGuidanceUpdate: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        guidanceProgress = try container.decodeIfPresent([GuidanceProgress].self, forKey: .guidanceProgress)
         type = try container.decodeIfPresent(String.self, forKey: .type)
         analysisId = try container.decodeIfPresent(String.self, forKey: .analysisId)
         sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
@@ -230,6 +239,15 @@ struct RoleGuidanceUpdate: Codable {
 }
 
 struct GuidanceItem: Codable, Identifiable {
+    let candidateId: String?
+    let targetRole: String?
+    let category: String?
+    let target: String?
+    let direction: String?
+    let errorMagnitude: Double?
+    let normalizedError: Double?
+    let priorityScore: Double?
+    let isResolved: Bool?
     let id: UUID
     let type: String
     let message: String
@@ -237,6 +255,15 @@ struct GuidanceItem: Codable, Identifiable {
     let value: Double?
 
     private enum CodingKeys: String, CodingKey {
+        case candidateId
+        case targetRole
+        case category
+        case target
+        case direction
+        case errorMagnitude
+        case normalizedError
+        case priorityScore
+        case isResolved
         case type
         case message
         case severity
@@ -245,6 +272,15 @@ struct GuidanceItem: Codable, Identifiable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        candidateId = try container.decodeIfPresent(String.self, forKey: .candidateId)
+        targetRole = try container.decodeIfPresent(String.self, forKey: .targetRole)
+        category = try container.decodeIfPresent(String.self, forKey: .category)
+        target = try container.decodeIfPresent(String.self, forKey: .target)
+        direction = try container.decodeIfPresent(String.self, forKey: .direction)
+        errorMagnitude = try container.decodeIfPresent(Double.self, forKey: .errorMagnitude)
+        normalizedError = try container.decodeIfPresent(Double.self, forKey: .normalizedError)
+        priorityScore = try container.decodeIfPresent(Double.self, forKey: .priorityScore)
+        isResolved = try container.decodeIfPresent(Bool.self, forKey: .isResolved)
         id = UUID()
         type = try container.decode(String.self, forKey: .type)
         message = try container.decode(String.self, forKey: .message)
@@ -254,6 +290,15 @@ struct GuidanceItem: Codable, Identifiable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(candidateId, forKey: .candidateId)
+        try container.encodeIfPresent(targetRole, forKey: .targetRole)
+        try container.encodeIfPresent(category, forKey: .category)
+        try container.encodeIfPresent(target, forKey: .target)
+        try container.encodeIfPresent(direction, forKey: .direction)
+        try container.encodeIfPresent(errorMagnitude, forKey: .errorMagnitude)
+        try container.encodeIfPresent(normalizedError, forKey: .normalizedError)
+        try container.encodeIfPresent(priorityScore, forKey: .priorityScore)
+        try container.encodeIfPresent(isResolved, forKey: .isResolved)
         try container.encode(type, forKey: .type)
         try container.encode(message, forKey: .message)
         try container.encodeIfPresent(severity, forKey: .severity)

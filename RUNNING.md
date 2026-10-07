@@ -41,7 +41,7 @@ cd 2026Collaboratry_Photographer_Interface/backend
 npm start
 ```
 
-デフォルトでは `http://localhost:3000` で起動します。`PORT` を指定するとポートを変更できます。
+デフォルトでは `HOST=127.0.0.1`、`http://localhost:3000` で起動します。LAN端末から直接アクセスする場合は `HOST=0.0.0.0 npm start` で起動してください。スマートフォンブラウザのカメラ利用にはHTTPSが必要なため、実機撮影ではHTTPSのリバースプロキシ等を使用します。`PORT` を指定するとポートを変更できます。
 
 ```sh
 PORT=3001 npm start
@@ -112,19 +112,24 @@ http://localhost:3000/?sessionId=任意のセッションID
 2. 実験者PINを入力する。開発時の既定値は `2026`。
 3. `participantId`、`pairId`、`referenceImageId`、条件を入力する。
 4. 「実験セッションを作成」を押す。
-5. 「試行を作成」を押す。
-6. 「試行を開始して撮影画面へ」を押す。
-7. 表示されたQRコードを撮影者側で開く。
-8. 撮影・送信を行う。
-9. 実験タブへ戻り、「試行を完了」または理由を入力して「試行を中断」を押す。
+5. 「関節点を抽出・補正する」で参照写真を確認・保存する。
+6. 「試行を作成」を押す。
+7. 「試行を開始して撮影画面へ」を押す。
+8. 表示されたQRコードを撮影者側で開く。
+9. 撮影・調整・再撮影・送信を行う。
+10. 実験タブへ戻り、「試行を完了」または理由を入力して「試行を中断」を押す。
 
-条件によるWeb表示は以下です。
+新規実験は `progressive-v1` です。試行作成の前に「関節点を抽出・補正する」で参照姿勢を確認・保存してください。試行作成時の姿勢版と設定が固定され、同じ参照写真・補正骨格ガイドを両端末で使用します。
 
-- 条件A: 撮影者向けガイド操作を非表示
-- 条件B: 撮影者向けガイド操作を表示
-- 条件C: 撮影者向けガイド操作を表示し、iOS側のライブ・被写体支援領域も有効化
+- 条件A: 視覚ガイドのみ。自動解析の候補・誤差・Readyはサーバーログだけに保存。
+- 条件B: 各端末へ、その役割の全未解決候補を提示。
+- 条件C: 各端末へ、その役割の最優先1件を提示。再撮影すると解決済みを除外して更新。
 
-ReferenceGuideを持つ保存済みガイドを使用している場合は、Webが写真を撮った直後にドラフト保存と撮影後解析を開始します。条件B/Cでは最新の撮影写真に対する撮影者向け構図指示とReady状態をWebへ表示します。条件Cではさらに、`roleGuidanceUpdated`の被写体向け指示とReady状態をiOS撮影画面に表示します。条件Aでは解析を呼びません。条件BではiOSの被写体向け指示を表示しません。通常モードは条件Cと同様に表示します。テンプレートガイド、旧形式など`guideId`を持たないガイドでは、写真は通常どおり保持しつつ解析だけをスキップします。「送信」を押すまではドラフト写真として扱われ、iOSの受信写真には表示されません。低頻度ライブ解析は今後追加します。
+ライブ映像・ガイド・参照写真は全条件共通です。実験中のガイド位置・拡大率は固定します。補正をやり直した場合は、新規試行を作って採用してください。古いセッションは旧条件のままです。新研究には新規セッションを使います。
+
+通常モードは全候補表示です。テンプレートや旧形式等でReferenceGuideがない場合は解析をスキップし、写真の保持・送信を継続します。写真は「送信」までドラフトで、iOSの受信写真一覧には表示されません。ライブ解析の定期送信は未接続です。
+
+優先度・閾値・ログ・実機チェックは [実装・評価ガイド](docs/progressive-guidance.md) を参照してください。設定ファイルの既定値は `backend/guide_processor/guidance_config.json`、上書きは `GUIDANCE_CONFIG=/absolute/path/to/config.json`。新規試行へ設定全体を保存するので、変更後は新規試行を作ってください。
 
 撮影ごとに`clientId`、`captureSequence`、`captureTimestamp`を付与し、解析ごとにバックエンドが`analysisId`を発行します。Web/iOSは`captureSequence`が古い解析結果、現在のtrialまたはguideと一致しない結果を表示しません。
 
@@ -172,7 +177,7 @@ subjectGuidanceDisplayTimestamp - captureTimestamp
 subjectGuidanceDisplayTimestamp - analysisEndTimestamp
 ```
 
-条件Bでは`subject_guidance_displayed`は記録されません。Ready遷移は初回値を基準として保持し、`false → true`または`true → false`に変化した場合だけ`ready_state_changed`を記録します。
+新条件B/Cは両端末の表示ログを記録します。Aは表示ログを生成しません。Ready遷移は初回値を基準として保持し、`false → true`または`true → false`に変化した場合だけ`ready_state_changed`を記録します。
 
 ## 8. 保存データ
 
@@ -196,10 +201,46 @@ backend に送られたファイルは以下に保存されます。
 
 - 撮影者 Web の「削除」ボタンによるセッションデータ削除
 - `DELETE /api/session/:sessionId` によるセッションデータ削除
-- `SESSION_TTL_MS` 経過後の自動削除
+- 通常セッションは`SESSION_TTL_MS`経過後の自動削除（参加者実験は除外）
 
-自動削除の既定値は 6 時間、確認間隔の既定値は 10 分です。
+iOSの「撮影を終了」は `POST /api/session/:sessionId/end` によりWebへ終了を通知し、撮影・ライブ共有を停止します。終了状態はサーバーに保存され、Web再接続時にも再通知されます。写真・実験ログは削除しません。試行の完了／中断は実験タブで別途記録します。
+
+通常セッションの自動削除の既定値は 6 時間、確認間隔の既定値は 10 分です。
 
 ```sh
 SESSION_TTL_MS=21600000 CLEANUP_INTERVAL_MS=600000 npm start
 ```
+
+## 8.1 参加者主導の実験
+
+iOSホームの「ユーザ実験を開始・再開」を使用します。研究者向け実験タブで参照姿勢を準備した後、`backend/experiment_plans/example.example.json`を別名のJSONへコピーし、実在するsourceSessionId/referenceImageId、ペア番号と条件順を設定します。雛形のままでは開始一覧に出ません。
+
+撮影者は参加QRから入り、双方が画面に従って練習→本番→独立写真評価→再撮影／試行アンケート→全試行完了と進みます。このモードでは最終写真が自動共有されます。質問と上限は`backend/experiment_flow_config.json`。詳細な準備、API、復旧、保存データ、未確認項目は [参加者実験フロー](docs/participant-experiment-flow.md) を参照してください。参加者実験の写真・ログはTTL対象外です。未開始計画の参照準備元は通常TTL対象なので準備期間に合わせて設定してください。研究データはバックアップCLIで別媒体へ保管します。
+
+## 9. 自動テストと確認範囲（2026年10月5日）
+
+プロジェクト直下で次を実行できます。Pythonは依存関係を入れた仮想環境を使います。
+
+```sh
+npm --prefix backend run test:session-flow
+npm --prefix backend run test:guidance
+npm --prefix backend run test:participant-flow
+npm --prefix backend run test:research-operations
+backend/.venv/bin/python -m unittest discover -s backend/guide_processor -p 'test_*.py'
+```
+
+今回、既存セッション連携、追加のProgressive Guidance連携・Web表示・ポリシーテスト、Python24件、Node/Web構文チェック、iOS Simulator向けビルドに合格しました。Swift単体テスト6件と既存UIテスト6実行も合格しました。参加者フローの練習＋本番6試行完走・回答非公開・重複送信・回答待ち中のサーバー再起動も検証済みです。実機E2E・実モデル精度評価は未実施です。`test:guidance` は既定で `backend/.venv/bin/python` を使い、`TEST_PYTHON` で変更できます。
+
+## 10. 本実験の準備・Export・バックアップ
+
+backendディレクトリで以下を実行します。
+
+```sh
+PYTHON=.venv/bin/python npm run check:experiment-ready
+npm run summary:experiments
+npm run export:experiment-data
+# バックアップ前にサーバーを停止する
+npm run backup:experiments
+```
+
+出力列、データ品質の判定、保存先変更、管理API、辞退・ペア切替、検証結果は [研究運用仕様](docs/research-operations.md) を参照してください。Readyの参加者表示は`showReadyToParticipants=false`が既定です。現在は実写真を割り当てた計画がないため開始前チェックはFAILです。

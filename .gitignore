@@ -30,3 +30,7 @@ DerivedData/
 
 yolov8n-pose.pt
 yolov8n-seg.pt
+
+# Private research exports and complete backups
+backend/research-exports/
+backend/research-backups/

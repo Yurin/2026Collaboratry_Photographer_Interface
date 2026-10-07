@@ -1,16 +1,17 @@
 // Offline analysis export. Missing/corrupt records are reported, never imputed.
 const fs=require('node:fs'),path=require('node:path'),{randomUUID,createHash}=require('node:crypto');
+const {trialMetrics,agreement}=require('./study_metrics');
 const ROLES=['photographer','subject'];
-const captureColumns=`participantPairId sessionId trialId trialIndex isPractice conditionId guidanceProtocolVersion flowProtocolVersion referenceImageId captureSequence photoId analysisId captureTimestamp analysisStatus analysisFailureReason compositionError centerError scaleError poseError totalError framingReady poseReady captureReady photographerSimilarity subjectSimilarity similarityGap photographerSatisfaction subjectSatisfaction satisfactionGap photographerWantsRetake subjectWantsRetake nextAction completionReason photographerGuidanceCount subjectGuidanceCount guidanceToNextCaptureMsPhotographer guidanceToNextCaptureMsSubject`.split(' ');
-const trialColumns=`participantPairId sessionId trialId trialIndex isPractice conditionId referenceImageId trialStartTimestamp captureEndTimestamp trialEndTimestamp captureCount retakeCount guidanceDisplayCount completionReason finalPhotoId finalCaptureSequence finalCompositionError finalPoseError finalTotalError finalPhotographerSimilarity finalSubjectSimilarity finalSimilarityGap finalPhotographerSatisfaction finalSubjectSatisfaction finalSatisfactionGap analysisFailureCount missingEvaluationCount`.split(' ');
-const questionnaireColumns=`participantPairId sessionId trialId conditionId role questionId response submittedAt`.split(' ');
+const captureColumns=`participantPairId sessionId trialId trialIndex isPractice conditionId guidanceProtocolVersion flowProtocolVersion referenceImageId captureSequence photoId analysisId captureTimestamp analysisStatus analysisFailureReason compositionError centerError scaleError poseError totalError framingReady poseReady captureReady photographerSimilarity subjectSimilarity similarityGap photographerSatisfaction subjectSatisfaction satisfactionGap photographerWantsRetake subjectWantsRetake nextAction completionReason photographerGuidanceCount subjectGuidanceCount guidanceToNextCaptureMsPhotographer guidanceToNextCaptureMsSubject mutualFinish limitReached questionnaireVersion`.split(' ');
+const trialColumns=`participantPairId sessionId trialId trialIndex isPractice conditionId referenceImageId trialStartTimestamp captureEndTimestamp trialEndTimestamp captureCount retakeCount guidanceDisplayCount completionReason finalPhotoId finalCaptureSequence finalCompositionError finalPoseError finalTotalError finalPhotographerSimilarity finalSubjectSimilarity finalSimilarityGap finalPhotographerSatisfaction finalSubjectSatisfaction finalSatisfactionGap analysisFailureCount missingEvaluationCount finalCenterError finalScaleError centerImprovement scaleImprovement poseImprovement mutualFinish limitReached capturesToMutualFinish mutualFinishCensored trialDurationMs captureAdjustmentMs guidanceReviewMs analysisCommunicationMs evaluationMs questionnaireMs humanOperationMs timingComplete questionnaireVersion studyId orderId assignmentId`.split(' ');
+const questionnaireColumns=`participantPairId sessionId trialId conditionId role questionId response submittedAt questionnaireVersion`.split(' ');
 function atomic(p,value){fs.mkdirSync(path.dirname(p),{recursive:true});const temp=p+'.'+randomUUID()+'.tmp';fs.writeFileSync(temp,JSON.stringify(value,null,2)+'\n',{mode:0o600});fs.renameSync(temp,p);}
 function names(dir){return fs.existsSync(dir)?fs.readdirSync(dir).sort():[];}
 function retained(dir){return fs.existsSync(path.join(dir,'experiment','flow.json'))||fs.existsSync(path.join(dir,'experiment','retention.json'))||(()=>{try{return !!JSON.parse(fs.readFileSync(path.join(dir,'experiment/session.json'))).flowProtocolVersion;}catch{return false;}})();}
 function shouldExpire(dir,now,ttl){return !retained(dir)&&now-fs.statSync(dir).mtimeMs>=ttl;}
 function status(v){return v==='completed'?'success':v??null;}
 function inspectSession(dir){
- const issues=[],captures=[],trials=[],questionnaires=[];const sid=path.basename(dir);
+ const issues=[],captures=[],trials=[],questionnaires=[],progress=[];const sid=path.basename(dir);
  function issue(code,details={},severity='error'){issues.push({code,severity,sessionId:sid,...details});}
  function read(file,optional=false){try{return JSON.parse(fs.readFileSync(path.join(dir,file),'utf8'));}catch(e){if(!optional||e.code!=='ENOENT')issue(e.code==='ENOENT'?'missing_file':'unreadable_json',{file});return null;}}
  const f=read('experiment/flow.json')||{},session=read('experiment/session.json')||{},plan=read('experiment/experiment-plan.json')||{};
@@ -27,7 +28,7 @@ function inspectSession(dir){
   if(tid!==folder)issue('trial_id_mismatch',ctx);
   const planItem=plan.items?.[expected.indexOf(tid)] ?? (t.isPractice?plan.practice:plan.trials?.[t.trialIndex-1]);
   if(planItem&&planItem.condition!==t.conditionId)issue('condition_mismatch',{...ctx,source:'plan'});
-  const common={participantPairId:pair,sessionId:sid,trialId:tid,trialIndex:t.trialIndex,isPractice:t.isPractice,conditionId:t.conditionId,referenceImageId:t.referenceImageId,guidanceProtocolVersion:t.guidanceProtocolVersion,flowProtocolVersion:t.flowProtocolVersion??f.flowProtocolVersion};
+  const common={participantPairId:pair,sessionId:sid,trialId:tid,trialIndex:t.trialIndex,isPractice:t.isPractice,conditionId:t.conditionId,referenceImageId:t.referenceImageId,guidanceProtocolVersion:t.guidanceProtocolVersion,flowProtocolVersion:t.flowProtocolVersion??f.flowProtocolVersion,questionnaireVersion:f.config?.questionnaireVersion||'legacy-trial-v1',studyId:plan.studyId,orderId:plan.orderId,assignmentId:plan.assignmentId};
   const auditPath=path.join(dir,prefix,'events.jsonl'),auditRecords=[],eventIds=new Set();
   if(fs.existsSync(auditPath))for(const [i,line] of fs.readFileSync(auditPath,'utf8').split('\n').entries()){
    if(!line.trim())continue;try{const ev=JSON.parse(line);auditRecords.push(ev);if(ev.eventId&&eventIds.has(ev.eventId))issue('duplicate_event',{...ctx,line:i+1},'warning');eventIds.add(ev.eventId);if(ev.eventType==='duplicate_submission')duplicateSubmissions++;}catch{issue('unreadable_event',{...ctx,line:i+1});}
@@ -50,16 +51,17 @@ function inspectSession(dir){
    if(analysisStatus==='not_available')issue('analysis_not_available',cctx,'warning');
    if(!['success','failed','not_available'].includes(analysisStatus))issue('analysis_unfinished',cctx);
    for(const role of ROLES)if(!c[role+'Evaluation'])issue('missing_evaluation',{...cctx,role});
-   const e=a?.alignmentError||{},p=c.photographerEvaluation||{},s=c.subjectEvaluation||{};
+   const e=analysisStatus==='success'?(a?.alignmentError||{}):{},p=c.photographerEvaluation||{},s=c.subjectEvaluation||{};
    // compositionError has no aggregate definition in progressive-v1: leave blank unless explicitly stored.
    const row={...common,captureSequence:c.captureSequence,photoId:c.photoId,analysisId:c.analysisId,captureTimestamp:c.captureTimestamp,analysisStatus,analysisFailureReason:c.analysisFailureReason??c.errorReason??a?.errorReason,
-    compositionError:e.compositionError,centerError:e.centerError,scaleError:e.scaleError,poseError:e.poseError,totalError:e.totalError,
+    mutualFinish:agreement(c),limitReached:c.decision?.limitReached??(c.decision?.completionReason==='maximum_capture_count'?true:null),compositionError:e.compositionError,centerError:e.centerError,scaleError:e.scaleError,poseError:e.poseError,totalError:e.totalError,
     framingReady:a?.ready?.framingReady,poseReady:a?.ready?.poseReady,captureReady:a?.ready?.captureReady,
     photographerSimilarity:p.similarityRating,subjectSimilarity:s.similarityRating,similarityGap:c.agreement?.similarityGap,
     photographerSatisfaction:p.satisfactionRating,subjectSatisfaction:s.satisfactionRating,satisfactionGap:c.agreement?.satisfactionGap,
     photographerWantsRetake:p.wantsRetake,subjectWantsRetake:s.wantsRetake,nextAction:c.decision?.nextAction,completionReason:c.decision?.completionReason,
     photographerGuidanceCount:Array.isArray(a?.photographerGuidance)?a.photographerGuidance.length:null,subjectGuidanceCount:Array.isArray(a?.subjectGuidance)?a.subjectGuidance.length:null};
    entries.push({c,row,a});captures.push(row);
+   for(const change of a?.guidanceProgress||[])progress.push({...common,analysisId:c.analysisId,...change});
   }
   // A lost evaluation file must not silently remove a known capture from the CSV.
   for(const ev of auditRecords.filter(ev=>ev.eventType==='photo_captured')){
@@ -83,7 +85,7 @@ function inspectSession(dir){
     if(response.comment!=null)questionnaires.push({...common,role,questionId:'freeText',response:response.comment,submittedAt:response.submittedAt});}
   }
   const r=final?.row||{};
-  trials.push({...common,trialStartTimestamp:t.startTime,captureEndTimestamp:t.captureEndTime,trialEndTimestamp:t.endTime,captureCount:entries.length,retakeCount:entries.filter(v=>v.c.decision?.nextAction==='retake').length,guidanceDisplayCount:entries.reduce((n,v)=>n+Object.keys(v.c.guidanceDisplays||{}).length,0),completionReason:t.completionReason,finalPhotoId:t.finalPhotoId,finalCaptureSequence:t.finalCaptureSequence,finalCompositionError:r.compositionError,finalPoseError:r.poseError,finalTotalError:r.totalError,finalPhotographerSimilarity:r.photographerSimilarity,finalSubjectSimilarity:r.subjectSimilarity,finalSimilarityGap:r.similarityGap,finalPhotographerSatisfaction:r.photographerSatisfaction,finalSubjectSatisfaction:r.subjectSatisfaction,finalSatisfactionGap:r.satisfactionGap,analysisFailureCount:entries.filter(v=>v.row.analysisStatus==='failed').length,missingEvaluationCount:entries.reduce((n,v)=>n+ROLES.filter(r=>!v.c[r+'Evaluation']).length,0),state:t.state});
+  trials.push({...common,...trialMetrics(entries,final,t,auditRecords),trialStartTimestamp:t.startTime,captureEndTimestamp:t.captureEndTime,trialEndTimestamp:t.endTime,captureCount:entries.length,retakeCount:entries.filter(v=>v.c.decision?.nextAction==='retake').length,guidanceDisplayCount:entries.reduce((n,v)=>n+Object.keys(v.c.guidanceDisplays||{}).length,0),completionReason:t.completionReason,finalPhotoId:t.finalPhotoId,finalCaptureSequence:t.finalCaptureSequence,finalCompositionError:r.compositionError,finalPoseError:r.poseError,finalTotalError:r.totalError,finalPhotographerSimilarity:r.photographerSimilarity,finalSubjectSimilarity:r.subjectSimilarity,finalSimilarityGap:r.similarityGap,finalPhotographerSatisfaction:r.photographerSatisfaction,finalSubjectSatisfaction:r.subjectSatisfaction,finalSatisfactionGap:r.satisfactionGap,analysisFailureCount:entries.filter(v=>v.row.analysisStatus==='failed').length,missingEvaluationCount:entries.reduce((n,v)=>n+ROLES.filter(r=>!v.c[r+'Evaluation']).length,0),state:t.state});
  }
  const main=trials.filter(t=>t.isPractice===false),expectedMain=f.totalTrials??plan.trials?.length??null;
  const declared=f.experimentStatus??session.experimentStatus??f.experimentPhase;
@@ -92,17 +94,18 @@ function inspectSession(dir){
  const report={schemaVersion:'research-export-v1',generatedAt:new Date().toISOString(),participantPairId:pair,sessionId:sid,status:resultStatus,experimentStatus:declared,
   trialsExpected:expectedMain,trialsCompleted:main.filter(t=>t.state==='completed').length,practice:trials.find(t=>t.isPractice)?.state??null,
   conditionCounts:Object.fromEntries(['A','B','C'].map(c=>[c,main.filter(t=>t.conditionId===c).length])),captures:captures.length,retakes:trials.reduce((n,t)=>n+t.retakeCount,0),missingEvaluations:trials.reduce((n,t)=>n+t.missingEvaluationCount,0),missingQuestionnaires,analysisFailures:captures.filter(c=>c.analysisStatus==='failed').length,missingFinalAnalysis,duplicateSubmissions,issues};
- return {captures,trials,questionnaires,report};
+ return {captures,trials,questionnaires,progress,report};
 }
+const progressColumns='participantPairId sessionId trialId conditionId referenceImageId analysisId previousAnalysisId previousCaptureSequence captureSequence candidateId targetRole guidanceCategory wasSelected beforeError afterError improvement improved resolved newlyResolved regressed status captureIntervalMs'.split(' ');
 function csv(columns,rows){const cell=v=>{if(v==null)return '';let s=String(v);if(typeof v==='string'&&/^[=+@\-\t\r]/.test(s))s="'"+s;return /[",\r\n]/.test(s)?'"'+s.replaceAll('"','""')+'"':s;};return '\uFEFF'+[columns.join(','),...rows.map(r=>columns.map(k=>cell(r[k])).join(','))].join('\r\n')+'\r\n';}
 function researchSessions(root){return names(root).filter(n=>fs.statSync(path.join(root,n)).isDirectory()&&retained(path.join(root,n)));}
 function separateOutput(root,out){const relative=path.relative(path.resolve(root),path.resolve(out));if(!relative||(!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative)))throw Error('Output must be outside the uploads/research source directory');}
 function exportData(root,out){
  separateOutput(root,out);
  fs.mkdirSync(out,{recursive:true});const results=researchSessions(root).map(s=>inspectSession(path.join(root,s)));
- for(const [file,cols,key] of [['capture-level.csv',captureColumns,'captures'],['trial-level.csv',trialColumns,'trials'],['questionnaire-responses.csv',questionnaireColumns,'questionnaires']])fs.writeFileSync(path.join(out,file),csv(cols,results.flatMap(r=>r[key])),{mode:0o600});
+ for(const [file,cols,key] of [['capture-level.csv',captureColumns,'captures'],['trial-level.csv',trialColumns,'trials'],['questionnaire-responses.csv',questionnaireColumns,'questionnaires'],['guidance-progress.csv',progressColumns,'progress']])fs.writeFileSync(path.join(out,file),csv(cols,results.flatMap(r=>r[key])),{mode:0o600});
  const respondents=new Map(),questionIds=new Set();
- for(const r of results.flatMap(r=>r.questionnaires)){const key=[r.sessionId,r.trialId,r.role].join(':');if(!respondents.has(key))respondents.set(key,{participantPairId:r.participantPairId,sessionId:r.sessionId,trialId:r.trialId,conditionId:r.conditionId,role:r.role,submittedAt:r.submittedAt,answers:{}});const row=respondents.get(key);row.answers[r.questionId]=r.response;row['answer:'+r.questionId]=r.response;questionIds.add(r.questionId);}
+ for(const r of results.flatMap(r=>r.questionnaires)){const key=[r.sessionId,r.trialId,r.role].join(':');if(!respondents.has(key))respondents.set(key,{participantPairId:r.participantPairId,sessionId:r.sessionId,trialId:r.trialId,conditionId:r.conditionId,role:r.role,submittedAt:r.submittedAt,questionnaireVersion:r.questionnaireVersion,answers:{}});const row=respondents.get(key);row.answers[r.questionId]=r.response;row['answer:'+r.questionId]=r.response;questionIds.add(r.questionId);}
  const rows=[...respondents.values()].map(r=>({...r,questionId:JSON.stringify(Object.keys(r.answers)),response:JSON.stringify(r.answers)}));
  fs.writeFileSync(path.join(out,'questionnaire-level.csv'),csv([...questionnaireColumns,...[...questionIds].sort().map(q=>'answer:'+q)],rows),{mode:0o600});
  atomic(path.join(out,'data-quality-report.json'),{schemaVersion:'research-export-v1',sessions:results.map(r=>r.report)});return results.map(r=>r.report);

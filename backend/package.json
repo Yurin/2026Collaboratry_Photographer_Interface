@@ -11,7 +11,9 @@
     "backup:experiments": "node experiment_tools.js backup",
     "check:experiment-ready": "node experiment_tools.js check",
     "summary:experiments": "node experiment_tools.js summary",
-    "test:research-operations": "node test/research-data.test.js"
+    "test:research-operations": "node test/research-data.test.js",
+    "register:experiment-plans": "node experiment_tools.js plans",
+    "test:study-design": "node test/study-design.test.js"
   },
   "dependencies": {
     "cors": "^2.8.6",

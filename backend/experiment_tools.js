@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Local researcher CLI: no public unauthenticated export endpoint.
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),{spawnSync}=require('node:child_process');
+const {generatePlans}=require('./experiment_plan_builder');
 const {exportData,backup,inspectSession,researchSessions}=require('./research_data');
 const {loadPlans,inspectPlan,referenceForPlan,configIssues}=require('./experiment_validation');
 function options(args){const o={};for(let i=0;i<args.length;i+=2){if(!args[i].startsWith('--')||!args[i+1])throw Error('Options require --name value');o[args[i].slice(2)]=args[i+1];}return o;}
@@ -27,10 +28,11 @@ function readiness({root,plansDir,flowPath,guidancePath,exportDir,backupDir,pyth
  return {status:checks.some(c=>c.status==='FAIL')?'FAIL':checks.some(c=>c.status==='WARNING')?'WARNING':'PASS',checks,plans:reports};
 }
 if(require.main===module){try{const command=process.argv[2],o=options(process.argv.slice(3)),root=path.resolve(o.root||path.join(__dirname,'uploads')),base=path.resolve(o.out||(command==='backup'?(process.env.RESEARCH_BACKUP_DIR||path.join(__dirname,'research-backups')):(process.env.RESEARCH_EXPORT_DIR||path.join(__dirname,'research-exports')))),stamp=new Date().toISOString().replace(/[:.]/g,'-')+'-'+process.pid;
- if(command==='export'){const out=path.join(base,stamp),reports=exportData(root,out);console.log(JSON.stringify({output:out,sessions:reports.map(r=>({sessionId:r.sessionId,status:r.status}))},null,2));}
+ if(command==='plans'){if(!o.spec)throw Error('plans requires --spec path');console.log(JSON.stringify(generatePlans({spec:JSON.parse(fs.readFileSync(path.resolve(o.spec),'utf8')),out:path.resolve(o.out||process.env.EXPERIMENT_PLAN_DIR||path.join(__dirname,'experiment_plans')),root,config:JSON.parse(fs.readFileSync(process.env.EXPERIMENT_FLOW_CONFIG||path.join(__dirname,'experiment_flow_config.json'),'utf8')),guidance:JSON.parse(fs.readFileSync(process.env.GUIDANCE_CONFIG||path.join(__dirname,'guide_processor/guidance_config.json'),'utf8'))}),null,2));}
+ else if(command==='export'){const out=path.join(base,stamp),reports=exportData(root,out);console.log(JSON.stringify({output:out,sessions:reports.map(r=>({sessionId:r.sessionId,status:r.status}))},null,2));}
  else if(command==='backup'){const out=path.join(base,stamp),manifest=backup(root,out);console.log(JSON.stringify({output:out,files:manifest.files.length},null,2));}
  else if(command==='summary'){console.log(JSON.stringify(researchSessions(root).map(s=>inspectSession(path.join(root,s)).report),null,2));}
  else if(command==='check'){const report=readiness({root,plansDir:path.resolve(process.env.EXPERIMENT_PLAN_DIR||path.join(__dirname,'experiment_plans')),flowPath:path.resolve(process.env.EXPERIMENT_FLOW_CONFIG||path.join(__dirname,'experiment_flow_config.json')),guidancePath:path.resolve(process.env.GUIDANCE_CONFIG||path.join(__dirname,'guide_processor/guidance_config.json')),exportDir:path.resolve(process.env.RESEARCH_EXPORT_DIR||path.join(__dirname,'research-exports')),backupDir:path.resolve(process.env.RESEARCH_BACKUP_DIR||path.join(__dirname,'research-backups')),python:process.env.PYTHON||'python3'});console.log(JSON.stringify(report,null,2));if(report.status==='FAIL')process.exitCode=1;}
- else throw Error('Commands: export | backup | summary | check');
+ else throw Error('Commands: plans --spec path | export | backup | summary | check');
 }catch(e){console.error(e.message);process.exitCode=1;}}
 module.exports={readiness};

@@ -12,16 +12,20 @@ enum ExperimentCondition: String, CaseIterable, Codable, Identifiable {
     var displayName: String {
         switch self {
         case .noSupport:
-            return "A: 支援なし"
+            return "A: ガイドのみ"
         case .photographerOnly:
-            return "B: 撮影者のみ"
+            return "B: 役割別・全指示"
         case .roleBased:
-            return "C: 役割別支援"
+            return "C: 役割別・段階的指示"
         }
     }
 }
 
 struct ExperimentTrial: Codable {
+    let guidanceProtocolVersion: String?
+    let guideId: String?
+    let guideUrl: String?
+    let referenceImageUrl: String?
     let trialId: String
     let sessionId: String
     let participantId: String
@@ -40,6 +44,7 @@ struct ExperimentTrial: Codable {
 }
 
 struct ExperimentSession: Codable {
+    let guidanceProtocolVersion: String?
     let sessionId: String
     let participantId: String
     let pairId: String
@@ -494,6 +499,14 @@ final class ExperimentState: ObservableObject {
     @Published var isEnabled = false
     @Published var sessionId = ""
     @Published var trialId = ""
+    @Published var guidanceProtocolVersion: String?
+    @Published var trialGuideId: String?
+    @Published var trialGuideUrl: String?
+    @Published var trialReferenceImageUrl: String?
+
+    var isProgressiveProtocol: Bool { guidanceProtocolVersion == "progressive-v1" }
+    var allowsSubjectGuidance: Bool { condition == .roleBased || (isProgressiveProtocol && condition == .photographerOnly) }
+
     @Published var condition: ExperimentCondition = .noSupport
     @Published var trialState = "未設定"
     @Published var participantId = ""
@@ -515,6 +528,10 @@ final class ExperimentState: ObservableObject {
         ) ?? .noSupport
         supportLevel = max(1, defaults.integer(forKey: "ExperimentSupportLevel"))
         isPractice = defaults.bool(forKey: "ExperimentIsPractice")
+        guidanceProtocolVersion = defaults.string(forKey: "GuidanceProtocolVersion")
+        trialGuideId = defaults.string(forKey: "TrialGuideId")
+        trialGuideUrl = defaults.string(forKey: "TrialGuideUrl")
+        trialReferenceImageUrl = defaults.string(forKey: "TrialReferenceImageUrl")
         isEnabled = !sessionId.isEmpty
     }
 
@@ -524,6 +541,10 @@ final class ExperimentState: ObservableObject {
 
     func apply(session: ExperimentSession) {
         isEnabled = true
+        guidanceProtocolVersion = session.guidanceProtocolVersion
+        trialGuideId = session.currentTrial?.guideId
+        trialGuideUrl = session.currentTrial?.guideUrl
+        trialReferenceImageUrl = session.currentTrial?.referenceImageUrl
         sessionId = session.sessionId
         participantId = session.participantId
         pairId = session.pairId
@@ -536,6 +557,10 @@ final class ExperimentState: ObservableObject {
     }
 
     func apply(trial: ExperimentTrial) {
+        guidanceProtocolVersion = trial.guidanceProtocolVersion
+        trialGuideId = trial.guideId
+        trialGuideUrl = trial.guideUrl
+        trialReferenceImageUrl = trial.referenceImageUrl
         trialId = trial.trialId
         trialState = trial.state
         condition = ExperimentCondition(rawValue: trial.conditionId) ?? condition
@@ -546,6 +571,10 @@ final class ExperimentState: ObservableObject {
     }
 
     func clear() {
+        guidanceProtocolVersion = nil
+        trialGuideId = nil
+        trialGuideUrl = nil
+        trialReferenceImageUrl = nil
         isEnabled = false
         sessionId = ""
         trialId = ""
@@ -555,6 +584,10 @@ final class ExperimentState: ObservableObject {
 
     func persist() {
         let defaults = UserDefaults.standard
+        defaults.set(guidanceProtocolVersion, forKey: "GuidanceProtocolVersion")
+        defaults.set(trialGuideId, forKey: "TrialGuideId")
+        defaults.set(trialGuideUrl, forKey: "TrialGuideUrl")
+        defaults.set(trialReferenceImageUrl, forKey: "TrialReferenceImageUrl")
         defaults.set(sessionId, forKey: "ExperimentSessionId")
         defaults.set(trialId, forKey: "ExperimentTrialId")
         defaults.set(participantId, forKey: "ExperimentParticipantId")

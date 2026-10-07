@@ -59,7 +59,7 @@ struct ContentView: View {
             photoRefreshRequest += 1
         }
         .onChange(of: experimentState.condition) { _, condition in
-            if experimentState.isRunning && condition != .roleBased {
+            if experimentState.isRunning && !experimentState.allowsSubjectGuidance {
                 roleGuidanceUpdate = nil
                 latestRoleGuidanceCaptureSequence = nil
                 latestRoleGuidanceCaptureTimestamp = nil
@@ -230,10 +230,18 @@ struct ContentView: View {
                 return
             }
 
+            if payload.type == "analysisStarted",
+               let update = try? decoder.decode(RoleGuidanceUpdate.self, from: data),
+               (!experimentState.isRunning || (experimentState.allowsSubjectGuidance && update.trialId == experimentState.trialId)),
+               (!experimentState.isRunning || !experimentState.isProgressiveProtocol || update.guideId == experimentState.trialGuideId),
+               shouldAcceptRoleGuidance(update) {
+                roleGuidanceUpdate = nil
+            }
+
             if payload.type == "roleGuidanceUpdated" {
                 do {
                     let update = try decoder.decode(RoleGuidanceUpdate.self, from: data)
-                    guard !experimentState.isRunning || experimentState.condition == .roleBased else {
+                    guard !experimentState.isRunning || experimentState.allowsSubjectGuidance else {
                         print("Ignored subject guidance for condition \(experimentState.condition.rawValue)")
                         return
                     }
@@ -243,6 +251,8 @@ struct ContentView: View {
                         print("Ignored roleGuidanceUpdated for stale trial: \(updateTrialId)")
                         return
                     }
+                    if experimentState.isRunning && experimentState.isProgressiveProtocol,
+                       update.guideId != experimentState.trialGuideId { return }
                     guard shouldAcceptRoleGuidance(update) else {
                         print("Ignored stale roleGuidanceUpdated: \(update.photoId ?? "unknown")")
                         return

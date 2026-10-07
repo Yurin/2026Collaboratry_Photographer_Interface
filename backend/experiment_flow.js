@@ -168,7 +168,7 @@ class ExperimentFlow {
     if(c.photographerEvaluation&&c.subjectEvaluation) {
       const max=f.captureCount>=this.trial(f).maximumCaptureCount;
       const mutual=!c.photographerEvaluation.wantsRetake&&!c.subjectEvaluation.wantsRetake;
-      c.decision={nextAction:max||mutual?"finish":"retake",completionReason:max?"maximum_capture_count":mutual?"mutual_finish":null,decidedAt:Date.now()};
+      c.decision={nextAction:max||mutual?"finish":"retake",completionReason:max?"maximum_capture_count":mutual?"mutual_finish":null,mutualFinish:mutual,limitReached:max,decidedAt:Date.now()};
       c.agreement={similarityGap:Math.abs(c.photographerEvaluation.similarityRating-c.subjectEvaluation.similarityRating),satisfactionGap:Math.abs(c.photographerEvaluation.satisfactionRating-c.subjectEvaluation.satisfactionRating)};
       this.writeCapture(f,c);this.event(f,"evaluations_completed","system",{},c);
       if(c.decision.nextAction==="finish") {
@@ -180,7 +180,7 @@ class ExperimentFlow {
   }
   questionnaire(s,token,b) {
     const f=this.load(s);assert(f,"実験が見つかりません",404);const role=this.role(f,token);this.check(f,b);
-    const q=this.d.read(this.questionnairePath(f))||{version:f.config.version,responses:{}};
+    const q=this.d.read(this.questionnairePath(f))||{version:f.config.version,questionnaireVersion:f.config.questionnaireVersion||"legacy-trial-v1",responses:{}};
     const keys=this.questions(f).map(q=>q.id);
     assert(b.answers&&keys.every(k=>rating(b.answers[k]))&&Object.keys(b.answers).every(k=>keys.includes(k)),"すべての質問に1〜7で回答してください",400);
     assert(typeof (b.comment??"")==="string"&&(b.comment||"").length<=2000,"自由記述は2000文字以内にしてください",400);

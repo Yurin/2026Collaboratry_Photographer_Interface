@@ -125,11 +125,11 @@ struct TakePhoto: View {
     }
 
     private var allowsPhotographerSupport: Bool {
-        !isExperimentMode || experimentState.condition != .noSupport
+        !isExperimentMode || (!experimentState.isProgressiveProtocol && experimentState.condition != .noSupport)
     }
 
     private var allowsSubjectSupport: Bool {
-        !isExperimentMode || experimentState.condition == .roleBased
+        !isExperimentMode || experimentState.allowsSubjectGuidance
     }
 
     var body: some View {
@@ -260,15 +260,19 @@ private extension TakePhoto {
     var subjectGuidancePanel: some View {
         if allowsSubjectSupport, let update = roleGuidanceUpdate {
             VStack(alignment: .leading, spacing: 10) {
-                Label("被写体への指示", systemImage: "figure.stand")
+                Label("現在の修正", systemImage: "figure.stand")
                     .font(.subheadline.weight(.bold))
 
+                if update.guidanceProgress?.contains(where: { $0.targetRole == "subject" && $0.wasSelected && $0.newlyResolved }) == true {
+                    Text("前の修正が完了 → 次の修正")
+                        .font(.caption)
+                }
                 if update.guideId == nil {
                     Text("ガイド情報がないため、指示を表示できません。")
                         .font(.footnote)
                         .foregroundColor(AppStyle.secondaryText)
                 } else if update.subjectGuidance.isEmpty {
-                    Text("現在、被写体向けの指示はありません。")
+                    Text(update.ready?.poseReady == true ? "ポーズはOKです。" : "現在、被写体向けの指示はありません。")
                         .font(.footnote)
                         .foregroundColor(AppStyle.secondaryText)
                 } else {
@@ -522,6 +526,16 @@ private extension TakePhoto {
 
     var remotePreviewView: some View {
         VStack(spacing: 10) {
+            if isExperimentMode && experimentState.isProgressiveProtocol,
+               let path = experimentState.trialReferenceImageUrl,
+               let url = URL(string: path, relativeTo: APIConfig.baseURL) {
+                DisclosureGroup("参照写真を確認") {
+                    AsyncImage(url: url) { image in
+                        image.resizable().scaledToFit().frame(maxHeight: 260)
+                    } placeholder: { ProgressView() }
+                }
+                .padding(.horizontal, 20)
+            }
             GeometryReader { proxy in
                 ZStack {
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -534,7 +548,14 @@ private extension TakePhoto {
                                 .scaledToFit()
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                            if allowsSubjectSupport, let guideImage = subjectGuideImage {
+                            if isExperimentMode && experimentState.isProgressiveProtocol,
+                               let path = experimentState.trialGuideUrl,
+                               let url = URL(string: path, relativeTo: APIConfig.baseURL) {
+                                AsyncImage(url: url) { image in
+                                    image.resizable().scaledToFit().opacity(overlayOpacity)
+                                } placeholder: { ProgressView() }
+                                .allowsHitTesting(false)
+                            } else if allowsSubjectSupport, let guideImage = subjectGuideImage {
                                 Image(uiImage: guideImage)
                                     .resizable()
                                     .scaledToFit()
@@ -1171,6 +1192,11 @@ private extension TakePhoto {
             ]
             if let severity = guidance.severity { item["severity"] = severity }
             if let value = guidance.value { item["value"] = value }
+            item["candidateId"] = guidance.candidateId
+            item["targetRole"] = guidance.targetRole
+            item["guidanceCategory"] = guidance.category
+            item["errorMagnitude"] = guidance.errorMagnitude
+            item["priorityScore"] = guidance.priorityScore
             return item
         }
         let payload: [String: Any] = [
@@ -1187,6 +1213,10 @@ private extension TakePhoto {
             "displayTimestamp": timestamp,
             "subjectGuidanceDisplayTimestamp": timestamp,
             "subjectGuidance": guidancePayload,
+            "selectedGuidance": guidancePayload,
+            "targetRole": "subject",
+            "guideId": update.guideId ?? "",
+            "conditionId": experimentState.condition.rawValue,
             "ready": readyPayload,
         ]
         subjectGuidanceDisplayLogs.append(payload)

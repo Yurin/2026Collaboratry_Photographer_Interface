@@ -3,8 +3,8 @@
   "maximumCaptureCount": 5,
   "questions": [
     {
-      "id": "ease",
-      "text": "撮影を進めやすかった"
+      "id": "difficulty",
+      "text": "この写真の撮影は難しかった"
     },
     {
       "id": "clarity",
@@ -15,50 +15,43 @@
       "text": "相手と協力しやすかった"
     },
     {
-      "id": "improvement",
-      "text": "写真を改善している感覚があった"
+      "id": "mentalEffort",
+      "text": "撮影を進めるために、頭を使う負担が大きかった"
     },
     {
-      "id": "usefulness",
-      "text": "提示された情報は役に立った",
+      "id": "guidanceUsefulness",
+      "text": "指示は役に立った",
       "conditions": [
         "B",
         "C"
       ]
     },
     {
-      "id": "amount",
-      "text": "情報量は適切だった",
+      "id": "guidanceAmount",
+      "text": "指示量は適切だった",
       "conditions": [
         "B",
         "C"
       ]
     },
     {
-      "id": "intrusion",
-      "text": "情報が邪魔に感じた",
+      "id": "guidanceIntrusion",
+      "text": "指示が邪魔だった",
       "conditions": [
         "B",
         "C"
       ]
     },
     {
-      "id": "timing",
-      "text": "情報が表示されるタイミングは適切だった",
+      "id": "presentationClarity",
+      "text": "指示の出し方は分かりやすかった",
       "conditions": [
         "B",
         "C"
       ]
-    },
-    {
-      "id": "finalSatisfaction",
-      "text": "最終写真に満足している"
-    },
-    {
-      "id": "finalSimilarity",
-      "text": "お手本写真を再現できたと思う"
     }
   ],
   "freeTextQuestion": "撮影中に困ったこと・気になったことがあれば教えてください",
-  "showReadyToParticipants": false
+  "showReadyToParticipants": false,
+  "questionnaireVersion": "role-aware-trial-v2"
 }

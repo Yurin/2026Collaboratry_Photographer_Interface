@@ -20,6 +20,12 @@ struct ExperimentSetupView: View {
                 lockView
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            // ContentViewのカスタムフッターに、フォームや遷移先の操作を隠されないようにする。
+            Color.clear
+                .frame(height: 82)
+                .accessibilityHidden(true)
+        }
         .background(AppStyle.background)
         .onDisappear {
             isUnlocked = false
@@ -162,6 +168,15 @@ struct ExperimentSetupView: View {
                             .foregroundStyle(message.contains("失敗") ? .red : .secondary)
                     }
                 }
+
+                Section {
+                    Color.clear
+                        .frame(height: 110)
+                        .accessibilityHidden(true)
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             }
             .navigationTitle("実験設定")
             .navigationBarTitleDisplayMode(.inline)

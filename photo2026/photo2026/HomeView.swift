@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 struct HomeView: View {
+    @State private var showParticipantExperiment = false
     @Binding var selectedIndex: Int
     @Binding var resetID: UUID
     @Binding var pendingSelectedGuides: [GuideItem]
@@ -25,6 +26,10 @@ struct HomeView: View {
                         .foregroundStyle(AppStyle.secondaryText)
                 }
                 .padding(.top, 22)
+
+                Button("ユーザ実験を開始・再開") { showParticipantExperiment = true }
+                    .buttonStyle(AppPrimaryButtonStyle())
+                    .frame(maxWidth: .infinity)
 
                 LazyVGrid(columns: actionColumns, spacing: 10) {
                     Button {
@@ -92,6 +97,7 @@ struct HomeView: View {
             .padding(.bottom, 110)
         }
         .background(AppStyle.background)
+        .fullScreenCover(isPresented: $showParticipantExperiment) { ParticipantExperimentView() }
     }
 }
 
