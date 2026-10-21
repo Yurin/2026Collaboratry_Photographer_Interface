@@ -1,58 +1,58 @@
+import math
+
 from PIL import Image, ImageDraw, ImageFilter
 
 from image_utils import create_transparent_canvas, centered_rectangle
 
 
+class GuideDetectionError(ValueError):
+    """A guide cannot be placed reliably on the reference image."""
+
+
+def guide_rectangle(image, person_box):
+    if person_box is None:
+        raise GuideDetectionError("人物の範囲を検出できませんでした。人物が見える写真を選んでください。")
+    left, top, right, bottom = person_box
+    rect = (max(0, left), max(0, top), min(image.width - 1, right), min(image.height - 1, bottom))
+    if not all(math.isfinite(value) for value in person_box) or rect[2] <= rect[0] or rect[3] <= rect[1]:
+        raise GuideDetectionError("人物の範囲を正しく検出できませんでした。")
+    return rect
+
+
+def eye_marker(image, pose_keypoints, person_box):
+    rect = guide_rectangle(image, person_box)
+    eyes = []
+    for index in (1, 2):  # COCO left/right eye
+        if pose_keypoints is None or len(pose_keypoints) <= index:
+            continue
+        x, y, confidence = pose_keypoints[index]
+        if (all(math.isfinite(value) for value in (x, y, confidence))
+                and confidence >= 0.5 and x > 0 and y > 0
+                and rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]):
+            eyes.append((x, y))
+    if len(eyes) != 2:
+        raise GuideDetectionError("両目の位置を検出できませんでした。目が見える写真やトリミング範囲で再試行してください。")
+    center = ((eyes[0][0] + eyes[1][0]) / 2, (eyes[0][1] + eyes[1][1]) / 2)
+    distance = math.dist(*eyes)
+    radius = max(image.width * 0.015, min(distance * 0.8, image.width * 0.12))
+    return center, radius
+
+
 def create_rectangle_guide(image, person_box=None, **_):
-    """Draw a rectangle guide. If person_box is provided, use it; otherwise use centered box."""
     canvas = create_transparent_canvas(image.size)
     draw = ImageDraw.Draw(canvas, "RGBA")
-
-    rect = person_box if person_box is not None else centered_rectangle(image)
-    stroke_width = max(8, int(image.width * 0.02))
-    draw.rectangle(rect, outline=(255, 255, 255, 220), width=stroke_width)
-
+    draw.rectangle(guide_rectangle(image, person_box), outline=(255, 255, 255, 220),
+                   width=max(8, int(image.width * 0.02)))
     return canvas
 
 
-def create_keypoints_guide(image, person_box=None, **_):
-    canvas = create_transparent_canvas(image.size)
+def create_keypoints_guide(image, person_box=None, pose_keypoints=None, **_):
+    canvas = create_rectangle_guide(image, person_box)
     draw = ImageDraw.Draw(canvas, "RGBA")
-
-    rect = person_box if person_box is not None else centered_rectangle(image)
-    stroke_width = max(8, int(image.width * 0.02))
-    draw.rectangle(rect, outline=(255, 255, 255, 220), width=stroke_width)
-
-    left, top, right, bottom = rect
-    center_x = (left + right) / 2
-    height = bottom - top
-
-    face_center = (center_x, top + height * 0.15)
-    face_radius = int(image.width * 0.04)
-    draw.ellipse(
-        [
-            face_center[0] - face_radius,
-            face_center[1] - face_radius,
-            face_center[0] + face_radius,
-            face_center[1] + face_radius,
-        ],
-        fill=(255, 255, 255, 220),
-        outline=(0, 0, 0, 200),
-        width=max(4, int(image.width * 0.008)),
-    )
-
-    draw.line(
-        [(center_x, top), (center_x, bottom)],
-        fill=(255, 255, 255, 200),
-        width=max(6, int(image.width * 0.015)),
-    )
-
-    draw.line(
-        [(left, top + height * 0.85), (right, top + height * 0.85)],
-        fill=(255, 255, 255, 200),
-        width=max(6, int(image.width * 0.015)),
-    )
-
+    (x, y), radius = eye_marker(image, pose_keypoints, person_box)
+    # An unfilled circle keeps the eyes visible beneath the overlay.
+    draw.ellipse((x - radius, y - radius, x + radius, y + radius),
+                 outline=(255, 255, 255, 240), width=max(4, int(image.width * 0.008)))
     return canvas
 
 

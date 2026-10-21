@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image
 
 from image_utils import open_image, trim_to_aspect_ratio, save_png, crop_with_normalized_rect
-from guide_types import create_keypoints_guide, create_rectangle_guide, create_silhouette_guide
+from guide_types import GuideDetectionError, create_keypoints_guide, create_rectangle_guide, create_silhouette_guide
 from person_detector import (
     detect_person_bbox,
     detect_person_keypoints,
@@ -79,6 +79,22 @@ def main():
 
     person_mask = None
     pose_keypoints = None
+    if args.type in ("rectangle", "keypoints"):
+        # Use the visible silhouette, including subjects cropped at the waist or chest.
+        try:
+            mask, _ = detect_person_mask(output_image)
+            if mask is not None:
+                visible_box = postprocess_person_mask(mask).getbbox()
+                if visible_box is not None:
+                    person_box = visible_box
+        except Exception as error:
+            print(f"Segmentation unavailable, using detected person box: {error}")
+        if args.type == "keypoints":
+            try:
+                pose_keypoints = detect_person_keypoints(output_image, target_box=person_box)
+            except Exception as error:
+                raise GuideDetectionError("目の位置の検出を実行できませんでした。") from error
+
     if args.type == "silhouette":
         try:
             person_mask, mask_box = detect_person_mask(output_image)
@@ -189,6 +205,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except MaskQualityError as error:
+    except (MaskQualityError, GuideDetectionError) as error:
         print(f"GUIDE_USER_ERROR:{error}", file=sys.stderr)
         raise SystemExit(2)
