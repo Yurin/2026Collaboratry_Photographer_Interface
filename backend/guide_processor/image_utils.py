@@ -1,11 +1,13 @@
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 def open_image(path):
     image_path = Path(path)
-    image = Image.open(image_path)
-    return image.convert("RGBA")
+    with Image.open(image_path) as image:
+        # Match the displayed orientation before computing crops or detections.
+        # exif_transpose also removes the tag to prevent a second rotation.
+        return ImageOps.exif_transpose(image).convert("RGBA")
 
 
 def trim_to_aspect_ratio(image, target_ratio=(3, 4)):
