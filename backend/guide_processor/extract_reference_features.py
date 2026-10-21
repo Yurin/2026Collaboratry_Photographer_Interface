@@ -73,6 +73,7 @@ def main():
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    image.convert("RGB").save(output_path.with_suffix(".jpg"), quality=90)
     output_path.write_text(
         json.dumps(reference_guide, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",

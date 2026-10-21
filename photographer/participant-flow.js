@@ -93,7 +93,7 @@
       if(s.acknowledged)text("相手の準備を待っています");else acknowledge("確認しました・次へ");
     }
     if(capture){title("お手本に近い写真を撮ってください");text(`${s.captureCount+1}回目 / ${s.maximumCaptureCount}回${s.isLastCapture?" ― 最後の撮影です":""}`);
-      activeGuideId=s.guideId;trialGuide={guideId:s.guideId,url:s.guideUrl};currentTrialId=s.trialId;currentTrialState="running";applySessionGuide(trialGuide);
+      activeGuideId=s.guideId;trialGuide={guideId:s.guideId,url:s.guideUrl,referenceImageUrl:s.referenceImageUrl};currentTrialId=s.trialId;currentTrialState="running";applySessionGuide(trialGuide);
       if(!currentStream)void startCamera().then(()=>{if(!shareActive&&currentStream)startLiveShare();});else if(!shareActive)startLiveShare();
       document.getElementById("captureBtn").disabled=false;
       panel.insertAdjacentHTML("beforeend",`<details><summary>お手本を確認</summary><img class="flow-photo" src="${escape(s.referenceImageUrl)}" alt="お手本"></details>`);

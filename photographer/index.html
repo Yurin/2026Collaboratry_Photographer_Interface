@@ -25,7 +25,8 @@
           </div>
 
           <div class="top-bar">
-            <div class="status">接続準備中</div>
+            <div class="status" role="status" aria-live="polite" hidden>接続準備中</div>
+            <img id="referenceThumbnail" class="reference-thumbnail" alt="お手本写真（3:4）" hidden />
             <div class="top-actions">
               <button id="toggleGridBtn" class="action-btn icon-toggle-btn" aria-label="グリッド線を消す" title="グリッド線を消す">▦</button>
               <button id="toggleGuideBtn" class="action-btn guide-control" hidden>ガイドON/OFF</button>

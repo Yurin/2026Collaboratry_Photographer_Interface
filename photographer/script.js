@@ -41,6 +41,19 @@ const captureReady = document.getElementById("captureReady");
 const experimentStatus = document.getElementById("experimentStatus");
 const guideControls = document.querySelectorAll(".guide-control");
 const status = document.querySelector(".status");
+const referenceThumbnail = document.getElementById("referenceThumbnail");
+let referenceThumbnailUrl = null;
+
+function setReferenceThumbnail(url) {
+  const nextUrl = url || null;
+  if (referenceThumbnailUrl === nextUrl) return;
+  referenceThumbnailUrl = nextUrl;
+  referenceThumbnail.hidden = true;
+  referenceThumbnail.onload = () => { referenceThumbnail.hidden = false; };
+  referenceThumbnail.onerror = () => { referenceThumbnail.hidden = true; };
+  referenceThumbnail.src = nextUrl || "";
+}
+
 
 const API_BASE_PATH = "/api";
 const DRAFT_UPLOAD_TIMEOUT_MS = 20000;
@@ -384,6 +397,9 @@ function applySessionGuide(guideState) {
     lastDisplayedReady = {};
   }
   activeGuideId = nextGuideId;
+  setReferenceThumbnail(guideState.referenceImageUrl || (nextGuideId
+    ? `${API_BASE_PATH}/guides/${encodeURIComponent(nextGuideId)}/reference?sessionId=${encodeURIComponent(sessionId)}`
+    : null));
   if (guideState.url) applyGuideUrl(guideState.url);
 }
 
@@ -411,7 +427,7 @@ function applyExperimentState(experiment) {
   }
   guidanceProtocolVersion = experiment.guidanceProtocolVersion;
   trialGuide = guidanceProtocolVersion === "progressive-v1" && experiment.currentTrial?.guideId
-    ? { guideId: experiment.currentTrial.guideId, url: experiment.currentTrial.guideUrl } : null;
+    ? { guideId: experiment.currentTrial.guideId, url: experiment.currentTrial.guideUrl, referenceImageUrl: experiment.currentTrial.referenceImageUrl } : null;
   experimentCondition = experiment.currentTrial?.conditionId || experiment.conditionId;
   if (trialGuide) {
     applySessionGuide(trialGuide);
@@ -420,7 +436,10 @@ function applyExperimentState(experiment) {
   const referencePanel = document.getElementById("trialReferencePanel");
   const referenceImage = document.getElementById("trialReferenceImage");
   referencePanel.hidden = !experiment.currentTrial?.referenceImageUrl;
-  if (!referencePanel.hidden) referenceImage.src = experiment.currentTrial.referenceImageUrl;
+  if (!referencePanel.hidden) {
+    referenceImage.src = experiment.currentTrial.referenceImageUrl;
+    setReferenceThumbnail(experiment.currentTrial.referenceImageUrl);
+  }
   currentTrialId = experiment.currentTrial?.trialId || experiment.currentTrialId || null;
   currentTrialState = experiment.currentTrial?.state || experiment.status || null;
   experimentStatus.textContent = currentTrialId

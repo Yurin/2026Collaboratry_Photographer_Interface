@@ -128,18 +128,23 @@ body {
   line-height: 1;
 }
 
-.status {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 8px 10px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(8px);
-  font-size: 12px;
-  line-height: 1.3;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+.reference-thumbnail {
+  width: clamp(72px, 22vw, 108px);
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 10px;
+  background: #171717;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  flex: 0 0 auto;
+}
+
+.reference-thumbnail[hidden], .status[hidden] {
+  display: none;
+}
+
+.top-actions {
+  margin-left: auto;
 }
 
 /* 下の操作パネル */

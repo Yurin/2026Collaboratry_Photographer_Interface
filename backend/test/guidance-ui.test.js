@@ -32,3 +32,16 @@ run(`renderRoleGuidance({photographerGuidance:[],ready:{framingReady:true}})`);
 assert.equal(element("roleGuidancePanel").hidden,false);
 assert.equal(element("photographerGuidanceList").children.at(-1).textContent,"構図はOKです");
 console.log("guidance UI passed: A visual guide/no automation, stale guard, condition reset, resolved message");
+
+assert.equal(element("referenceThumbnail").src, "/api/guides/g2/reference?sessionId=");
+run('setReferenceThumbnail("/cropped-reference.jpg")');
+assert.equal(element("referenceThumbnail").hidden, true);
+element("referenceThumbnail").onload();
+assert.equal(element("referenceThumbnail").hidden, false);
+run('setReferenceThumbnail("/next-reference.jpg")');
+assert.equal(element("referenceThumbnail").hidden, true);
+element("referenceThumbnail").onerror();
+assert.equal(element("referenceThumbnail").hidden, true);
+run('setReferenceThumbnail(null)');
+assert.equal(element("referenceThumbnail").hidden, true);
+console.log("reference thumbnail passed: guide switch, loading, failure, clear");

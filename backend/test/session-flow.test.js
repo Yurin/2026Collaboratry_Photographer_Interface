@@ -1,7 +1,8 @@
 const assert = require("node:assert/strict");
 const net = require("node:net");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const { spawn, execFileSync } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
 const { WebSocket } = require("ws");
 
@@ -78,15 +79,34 @@ async function run() {
   const sessionId = `flow-${randomUUID()}`;
   const server = spawn(process.execPath, ["server.js"], {
     cwd: backendDir,
-    env: { ...process.env, HOST: "127.0.0.1", PORT: String(port) },
+    env: { ...process.env, PYTHON: process.env.PYTHON || path.join(backendDir, ".venv/bin/python"), HOST: "127.0.0.1", PORT: String(port) },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let serverError = "";
   server.stderr.on("data", (chunk) => { serverError += chunk.toString(); });
 
+  const referenceGuideId = `reference-test-${randomUUID()}`;
+  const referenceJson = path.join(backendDir, "data/reference_guides", `${referenceGuideId}.json`);
+  const referenceJpg = referenceJson.replace(/\.json$/, ".jpg");
+  const referenceDir = path.join(backendDir, "uploads", sessionId, "references");
   const sockets = [];
   try {
     await waitForServer(baseUrl);
+
+    fs.mkdirSync(referenceDir, { recursive: true });
+    const python = process.env.PYTHON || path.join(backendDir, ".venv/bin/python");
+    execFileSync(python, ["-c", "from PIL import Image; import sys; Image.new('RGB',(60,80),(30,90,150)).save(sys.argv[1])", path.join(referenceDir, "source.png")]);
+    fs.writeFileSync(referenceJson, JSON.stringify({referencePhotoId:"source.png", cropRect:{x:0.25,y:0.25,width:0.5,height:0.5}}));
+    const referenceUrl = `${baseUrl}/api/guides/${referenceGuideId}/reference?sessionId=${sessionId}`;
+    const firstReference = await fetch(referenceUrl);
+    assert.equal(firstReference.status, 200, await firstReference.clone().text());
+    assert.match(firstReference.headers.get("content-type"), /image\/jpeg/);
+    const originalBytes = Buffer.from(await firstReference.arrayBuffer());
+    execFileSync(python, ["-c", "from PIL import Image; import sys; assert Image.open(sys.argv[1]).size == (900,1200)", referenceJpg]);
+    fs.unlinkSync(path.join(referenceDir, "source.png"));
+    const cachedReference = await fetch(referenceUrl);
+    assert.deepEqual(Buffer.from(await cachedReference.arrayBuffer()), originalBytes);
+    assert.equal((await fetch(`${baseUrl}/api/guides/missing-${referenceGuideId}/reference`)).status, 404);
 
     const watcher = await openSocket(`${wsBaseUrl}/ws/session?sessionId=${sessionId}`);
     const receiver = await openSocket(`${wsBaseUrl}/ws/video?sessionId=${sessionId}&role=receiver`);
@@ -140,6 +160,8 @@ async function run() {
 
     console.log("session flow passed: video relay, guide update, end notification, reconnect replay");
   } finally {
+    fs.rmSync(referenceJson, { force: true });
+    fs.rmSync(referenceJpg, { force: true });
     sockets.forEach((socket) => socket.close());
     try {
       await fetch(`${baseUrl}/api/session/${sessionId}`, { method: "DELETE" });

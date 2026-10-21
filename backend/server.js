@@ -595,6 +595,7 @@ function findPhotoPath(sessionId, photoId) {
 
 function latestGuideFeaturesPath(sessionId) {
   const featureFiles = listFiles(getGuideFeaturesDir(sessionId))
+    .filter((file) => file.filename.endsWith(".json"))
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
   if (featureFiles.length === 0) return null;
   return path.join(getGuideFeaturesDir(sessionId), featureFiles[0].filename);
@@ -633,6 +634,10 @@ function persistCanonicalGuideFeatures(featuresPath, guideId) {
   const features = readJsonFile(featuresPath);
   if (!features) return false;
   writeJsonFile(getCanonicalGuideFeaturesPath(guideId), features);
+  const photoPath = featuresPath.replace(/\.json$/, ".jpg");
+  if (fs.existsSync(photoPath)) {
+    fs.copyFileSync(photoPath, getCanonicalGuideFeaturesPath(guideId).replace(/\.json$/, ".jpg"));
+  }
   return true;
 }
 
@@ -1995,6 +2000,43 @@ app.get("/api/photos", (req, res) => {
     success: true,
     files,
   });
+});
+
+// Serve the exact crop used for guide generation, independently of the active session.
+app.get("/api/guides/:guideId/reference", (req, res) => {
+  const guideId = safeIdentifier(req.params.guideId);
+  const sessionId = safeSessionId(req.query.sessionId, "");
+  const featuresPath = findGuideFeaturesPath(sessionId, guideId);
+  if (!featuresPath) return res.status(404).json({ error: "reference photo not found" });
+  const photoPath = getCanonicalGuideFeaturesPath(guideId).replace(/\.json$/, ".jpg");
+  try {
+    if (!fs.existsSync(photoPath)) {
+      const localPhoto = featuresPath.replace(/\.json$/, ".jpg");
+      if (fs.existsSync(localPhoto)) {
+        fs.copyFileSync(localPhoto, photoPath);
+      } else {
+        // Older guides have crop metadata but no pre-rendered reference photo.
+        const features = readJsonFile(featuresPath);
+        const filename = features?.referencePhotoId;
+        if (!filename || path.basename(filename) !== filename) {
+          return res.status(404).json({ error: "reference photo not available" });
+        }
+        const source = fs.readdirSync(uploadRoot, { withFileTypes: true })
+          .filter(entry => entry.isDirectory())
+          .map(entry => path.join(uploadRoot, entry.name, "references", filename))
+          .find(candidate => fs.existsSync(candidate));
+        if (!source) return res.status(404).json({ error: "reference photo not available" });
+        execFileSync(process.env.PYTHON || "python3", [
+          path.join(__dirname, "guide_processor", "render_reference_photo.py"),
+          source, photoPath, JSON.stringify(features.cropRect || null),
+        ], { timeout: 15000, stdio: ["ignore", "pipe", "pipe"] });
+      }
+    }
+    return res.sendFile(photoPath);
+  } catch (error) {
+    console.error("reference photo rendering failed:", error);
+    return res.status(500).json({ error: "reference photo rendering failed" });
+  }
 });
 
 app.get("/api/guides/:guideId/features", (req, res) => {
