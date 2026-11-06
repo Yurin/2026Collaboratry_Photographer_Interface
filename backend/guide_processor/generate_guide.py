@@ -109,7 +109,7 @@ def main():
         try:
             pose_keypoints = detect_person_keypoints(output_image, target_box=person_box)
         except Exception as error:
-            print(f"Pose unavailable, using silhouette without skeleton: {error}")
+            print(f"Pose unavailable, validating silhouette without pose keypoints: {error}")
 
         pose_frame = classify_pose_frame(pose_keypoints, output_image.size)
         attempts = [("standard", person_mask, person_box)]

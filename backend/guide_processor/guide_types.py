@@ -76,9 +76,6 @@ def create_segmented_pose_guide(image, person_mask, pose_keypoints=None):
     outline = Image.new("RGBA", image.size, (255, 255, 255, 235))
     canvas.alpha_composite(Image.composite(outline, create_transparent_canvas(image.size), edge_mask))
 
-    if pose_keypoints:
-        draw_pose_skeleton(canvas, pose_keypoints)
-
     return canvas
 
 
