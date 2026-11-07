@@ -2,6 +2,7 @@ import SwiftUI
 import Photos
 import UIKit
 
+@MainActor
 struct ReceivedPhotosView: View {
     @Binding var sessionId: String
     let refreshRequest: Int
@@ -10,6 +11,9 @@ struct ReceivedPhotosView: View {
     @State private var isLoading = false
     @State private var isSaving = false
     @State private var message: String?
+    @State private var deletionCandidates: [PhotoFile] = []
+    @State private var showDeleteConfirmation = false
+    @State private var fetchID = UUID()
 
     var body: some View {
         NavigationStack {
@@ -100,6 +104,14 @@ struct ReceivedPhotosView: View {
                                                 .clipShape(Capsule())
                                         }
                                         .disabled(isSaving)
+
+                                        Button(role: .destructive) {
+                                            deletionCandidates = [photo]
+                                            showDeleteConfirmation = true
+                                        } label: {
+                                            Label("削除", systemImage: "trash")
+                                        }
+                                        .disabled(isSaving)
                                     }
                                 }
                                 .padding(.horizontal, 16)
@@ -109,13 +121,9 @@ struct ReceivedPhotosView: View {
                     }
 
                     VStack(spacing: 10) {
-                        if let message {
-                            Text(message)
-                                .font(.footnote)
-                                .foregroundColor(message.contains("失敗") || message.contains("許可") ? .red : .secondary)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 16)
-                        }
+                        Text("保存した写真は受信一覧から自動で削除されます")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
 
                         HStack(spacing: 12) {
                             Button {
@@ -155,10 +163,36 @@ struct ReceivedPhotosView: View {
                     .padding(.top, 8)
                     .background(AppStyle.background)
                 }
+                if let message {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundColor(message.contains("失敗") || message.contains("許可") || message.contains("エラー") ? .red : .secondary)
+                        .multilineTextAlignment(.center)
+                        .padding()
+                }
             }
             .background(AppStyle.background)
             .navigationTitle("届いた写真")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("すべて削除", role: .destructive) {
+                        deletionCandidates = photos
+                        showDeleteConfirmation = true
+                    }
+                    .disabled(isSaving || isLoading || photos.isEmpty)
+                }
+            }
+            .confirmationDialog("受信一覧から削除しますか？", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+                Button("\(deletionCandidates.count)枚を削除", role: .destructive) {
+                    removeFromInbox(deletionCandidates, for: sessionId)
+                    message = "\(deletionCandidates.count)枚を受信一覧から削除しました"
+                    deletionCandidates = []
+                }
+                Button("キャンセル", role: .cancel) { deletionCandidates = [] }
+            } message: {
+                Text("未保存の写真も一覧から消えます。写真アプリに保存済みの写真は残ります。")
+            }
             .task {
                 await fetchPhotos()
             }
@@ -166,6 +200,9 @@ struct ReceivedPhotosView: View {
                 await fetchPhotos()
             }
             .onChange(of: sessionId) { _, _ in
+                photos = []
+                showDeleteConfirmation = false
+                deletionCandidates = []
                 Task { await fetchPhotos() }
             }
             .onChange(of: refreshRequest) { _, _ in
@@ -175,7 +212,12 @@ struct ReceivedPhotosView: View {
     }
 
     private func fetchPhotos() async {
+        let requestedSession = sessionId
+        let requestID = UUID()
+        fetchID = requestID
         guard !sessionId.isEmpty else {
+            photos = []
+            isLoading = false
             message = "セッションIDが設定されていません"
             return
         }
@@ -184,17 +226,29 @@ struct ReceivedPhotosView: View {
         message = nil
 
         do {
-            let photoFiles = try await SessionAPI.shared.fetchPhotos(sessionId: sessionId)
+            let photoFiles = try await SessionAPI.shared.fetchPhotos(sessionId: requestedSession)
+            guard fetchID == requestID, sessionId == requestedSession else { return }
             // filename にタイムスタンプが入っているので新しい順に並べる
-            photos = photoFiles.sorted { $0.filename > $1.filename }
+            photos = ReceivedPhotoInbox.visible(photoFiles, sessionId: requestedSession)
+                .sorted { $0.filename > $1.filename }
         } catch {
+            guard fetchID == requestID, sessionId == requestedSession else { return }
             message = "取得エラー: \(error.localizedDescription)"
         }
 
         isLoading = false
     }
 
+    private func removeFromInbox(_ removed: [PhotoFile], for originalSession: String) {
+        ReceivedPhotoInbox.remove(removed, sessionId: originalSession)
+        if sessionId == originalSession {
+            photos = ReceivedPhotoInbox.visible(photos, sessionId: originalSession)
+        }
+    }
+
     private func saveOnePhoto(_ photo: PhotoFile) async {
+        guard !isSaving else { return }
+        let originalSession = sessionId
         guard let url = URL(string: photo.url) else {
             message = "画像URLが不正です"
             return
@@ -213,7 +267,8 @@ struct ReceivedPhotosView: View {
 
             let image = try await downloadImage(from: url)
             try await saveImageToPhotoLibrary(image)
-            message = "1枚保存しました"
+            removeFromInbox([photo], for: originalSession)
+            message = "1枚保存し、受信一覧から削除しました"
         } catch {
             message = "保存に失敗しました: \(error.localizedDescription)"
         }
@@ -222,7 +277,9 @@ struct ReceivedPhotosView: View {
     }
 
     private func saveAllPhotos() async {
-        guard !photos.isEmpty else { return }
+        guard !isSaving, !photos.isEmpty else { return }
+        let originalSession = sessionId
+        let photosToSave = photos
 
         isSaving = true
         message = nil
@@ -236,14 +293,15 @@ struct ReceivedPhotosView: View {
             }
 
             var images: [UIImage] = []
-            for photo in photos {
-                guard let url = URL(string: photo.url) else { continue }
+            for photo in photosToSave {
+                guard let url = URL(string: photo.url) else { throw URLError(.badURL) }
                 let image = try await downloadImage(from: url)
                 images.append(image)
             }
 
             try await saveImagesToPhotoLibrary(images)
-            message = "\(images.count)枚保存しました"
+            removeFromInbox(photosToSave, for: originalSession)
+            message = "\(images.count)枚保存し、受信一覧から削除しました"
         } catch {
             message = "保存に失敗しました: \(error.localizedDescription)"
         }
