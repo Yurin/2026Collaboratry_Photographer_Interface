@@ -10,9 +10,8 @@ const canvas = document.getElementById("canvas");
 const thumbnailContainer = document.getElementById("thumbnailContainer");
 const photoCount = document.getElementById("photoCount");
 const sendBtn = document.getElementById("sendBtn");
-const clearBtn = document.getElementById("clearBtn");
+const endCaptureBtn = document.getElementById("endCaptureBtn");
 const shareLiveBtn = document.getElementById("shareLiveBtn");
-const deleteSessionBtn = document.getElementById("deleteSessionBtn");
 const viewGalleryBtn = document.getElementById("viewGalleryBtn");
 const closeGalleryBtn = document.getElementById("closeGalleryBtn");
 const gallerySummary = document.getElementById("gallerySummary");
@@ -982,13 +981,6 @@ async function deleteDraftPhoto(record) {
   await removeDraftFromServer(record);
 }
 
-function discardCapturedPhotos(records) {
-  records.forEach((record) => {
-    record.deleted = true;
-    void deleteDraftPhoto(record);
-  });
-}
-
 function refreshLatestGuidance() {
   const latest = photos[photos.length - 1] || null;
   latestCapturedClientId = latest?.clientId || null;
@@ -1021,10 +1013,7 @@ function refreshLatestGuidance() {
 }
 
 function finishCaptureAfterSend() {
-  stopLiveShare();
-  shareLiveBtn.textContent = "ライブ共有";
-  setConnectionState(wsSession?.readyState === WebSocket.OPEN ? "connected" : "disconnected");
-  showSupportMessage("撮影を終了しました。", { autoHideMs: 3000 });
+  void handleSessionEnded();
 }
 
 function askPostSendAction() {
@@ -1106,6 +1095,7 @@ shareLiveBtn.addEventListener("click", () => {
 });
 
 captureBtn.addEventListener("click", async () => {
+  if (sessionEndRequested || isSendingPhotos) return;
   if (!video.videoWidth || !video.videoHeight) {
     showActionHint(
       "『撮影』はカメラ映像が見えてから使えます。映像が表示されるまで少し待ってから、もう一度押してください。"
@@ -1503,7 +1493,7 @@ function updateThumbnails() {
     deleteBtn.setAttribute("aria-label", `写真 ${index + 1} を削除`);
     deleteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (isSendingPhotos) {
+      if (sessionEndRequested || isSendingPhotos) {
         showActionHint("写真の送信準備中は削除できません。少し待ってからお試しください。");
         return;
       }
@@ -1567,60 +1557,8 @@ photoPreviewOverlay.addEventListener("click", (event) => {
   }
 });
 
-clearBtn.addEventListener("click", () => {
-  if (photos.length === 0) {
-    showActionHint(
-      "『クリア』は撮影した写真をまとめて消すボタンです。今は削除する写真がないため、何もしません。"
-    );
-    return;
-  }
-  if (isSendingPhotos) {
-    showActionHint("写真の送信準備中はクリアできません。少し待ってからお試しください。");
-    return;
-  }
-  if (confirm("すべての写真を削除しますか？")) {
-    const discardedRecords = [...photos];
-    resetCapturedPhotos({ preserveGuidance: false });
-    discardCapturedPhotos(discardedRecords);
-    logExperimentEvent("photos_cleared");
-  }
-});
-
-deleteSessionBtn.addEventListener("click", async () => {
-  if (!sessionId) {
-    showActionHint(
-      "『削除』はこのセッションの保存データを消すボタンです。まずは被写体側のQRコードからセッションを開いてください。"
-    );
-    return;
-  }
-  if (!confirm("このセッションのサーバー保存データを削除しますか？")) return;
-
-  try {
-    const response = await fetch(`${API_BASE_PATH}/session/${encodeURIComponent(sessionId)}`, {
-      method: "DELETE",
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-    resetCapturedPhotos({ preserveGuidance: false });
-    guideUrlOverride = null;
-    activeGuideId = null;
-    verifiedGuideIds.clear();
-    latestRoleGuidance = null;
-    roleGuidancePanel.hidden = true;
-    guide.removeAttribute("src");
-    guide.hidden = true;
-    guideTransform = {
-      offsetX: 0,
-      offsetY: 0,
-      scale: 1,
-      opacity: 0.5,
-    };
-    applyGuideTransform(guideTransform);
-    showError("このセッションの保存データを削除しました。");
-  } catch (error) {
-    console.error(error);
-    showError("セッションデータの削除に失敗しました。サーバーとの接続を確認してください。");
-  }
+endCaptureBtn.addEventListener("click", () => {
+  void handleSessionEnded();
 });
 
 async function waitForDraftUploads(records, label = "送信準備中") {
@@ -1740,7 +1678,11 @@ async function sendCapturedPhotos({ promptAfterSend = true } = {}) {
       if (promptAfterSend && !sessionEndRequested) {
         nextAction = await askPostSendAction();
       }
-      resetCapturedPhotos();
+      // Keep any photos captured while this batch was being sent for the next batch.
+      photos = photos.filter((record) => !recordsToSend.includes(record));
+      selectedPhotoIndex = null;
+      updateThumbnails();
+      updatePhotoCount();
 
       if (promptAfterSend && !sessionEndRequested) {
         if (nextAction === "finish") {
@@ -1772,6 +1714,9 @@ function showThankYouPage(sendFailed = false) {
   photoPreviewOverlay.hidden = true;
   postSendDialog.hidden = true;
   thankYouPanel.hidden = false;
+  document.getElementById("sessionEndTitle").textContent = sendFailed
+    ? "写真を送信できませんでした"
+    : "撮影へのご協力ありがとうございました";
   sessionEndMessage.textContent = sendFailed
     ? "写真を送信できませんでした。通信状態を確認して再送してください。"
     : "写真の送信が完了しました。このページを閉じてください。";
@@ -1787,8 +1732,8 @@ async function handleSessionEnded() {
   currentStream?.getTracks().forEach((track) => track.stop());
   captureBtn.disabled = true;
   shareLiveBtn.disabled = true;
-  clearBtn.disabled = true;
-  deleteSessionBtn.disabled = true;
+  endCaptureBtn.disabled = true;
+  endCaptureBtn.textContent = "写真を送信中…";
   sendBtn.disabled = true;
   showSupportMessage("セッションが終了しました。未送信写真を送信しています。", { autoHideMs: 0 });
 

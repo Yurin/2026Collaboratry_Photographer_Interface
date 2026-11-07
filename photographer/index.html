@@ -77,8 +77,7 @@
           <div class="action-buttons">
             <button id="shareLiveBtn" class="action-btn send-btn">ライブ共有</button>
             <button id="sendBtn" class="action-btn send-btn">送信</button>
-            <button id="clearBtn" class="action-btn clear-btn">クリア</button>
-            <button id="deleteSessionBtn" class="action-btn danger-btn">削除</button>
+            <button id="endCaptureBtn" class="action-btn secondary-btn">撮影をやめる</button>
           </div>
 
           <button id="viewGalleryBtn" class="action-btn secondary-btn">撮影済み写真はありません</button>
@@ -113,7 +112,7 @@
       <section id="thankYouPanel" class="panel thank-you-panel" hidden aria-live="polite">
         <div class="thank-you-card">
           <div class="thank-you-icon" aria-hidden="true">✓</div>
-          <h1>撮影へのご協力<br />ありがとうございました</h1>
+          <h1 id="sessionEndTitle">撮影へのご協力<br />ありがとうございました</h1>
           <p id="sessionEndMessage">写真の送信が完了しました。このページを閉じてください。</p>
           <button id="retryEndSendBtn" type="button" class="action-btn send-btn" hidden>写真を再送する</button>
         </div>
